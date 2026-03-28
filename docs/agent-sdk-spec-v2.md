@@ -82,27 +82,34 @@ Every agent-exposed method **must** have labeled parameters with supported types
 @AgentSDK
 @Observable
 final class AppState {
-    // SUPPORTED — labeled params, primitive types
+    // SUPPORTED — primitive params
     func addTodo(title: String) -> [String: Any]? { ... }
     func toggleTodo(index: Int) { ... }
     func loadBook(bookID: String, chapter: Int) -> [String: Any]? { ... }
     func setVolume(level: Double) { ... }
     func reset() { ... }  // zero params is fine
 
+    // SUPPORTED — Codable param (must conform to Decodable)
+    func moveTo(point: Point) { ... }
+    func importBooks(options: ImportOptions) -> ImportResult { ... }
+
     // SKIPPED — unlabeled param
     func process(_ items: [TodoItem]) { ... }
-
-    // SKIPPED — non-primitive param type
-    func configure(opts: MyStruct) { ... }
 
     // SKIPPED — private
     private func internalHelper() { ... }
 }
 ```
 
-**Supported parameter types:** `String`, `Int`, `Double`, `Bool`
+**Parameter types:**
+- Primitives (`String`, `Int`, `Double`, `Bool`) → direct cast from JSON
+- Any other type with a label and type annotation → `__agentDecode<T>()` — must conform to `Decodable` or you get a compile error
 
-**Return types:** anything JSON-serializable, or `Void`. Void methods return `.value(nil)`.
+**Return types:**
+- `Void` / omitted → `.value(nil)`
+- Primitives → `.value(result)` (already JSON-compatible)
+- `[String: Any]?` → `.value(result)` (already JSON)
+- Any other type → `.value(__agentEncode(result))` — must conform to `Encodable` or compile error
 
 **Skipped methods:**
 - `private` or `fileprivate`
@@ -119,19 +126,27 @@ final class AppState {
 The macro matches type annotation tokens as literal strings:
 
 ```
-"String"           → primitive, cast: as? String
-"Int"              → primitive, cast: (as? NSNumber)?.intValue
-"Double"           → primitive, cast: (as? NSNumber)?.doubleValue
-"Bool"             → primitive, cast: (as? NSNumber)?.boolValue
-"String?"          → optional primitive (same cast, nil-safe)
-"Int?", etc.       → optional primitive
-"[Foo]"            → array of Foo (Foo resolved recursively)
-"[String]"         → array of primitives
-any other ident    → assume class, use as? AgentDispatchable at runtime
-missing            → skip entirely
+Property type annotations:
+  "String", "Int", "Double", "Bool"  → primitive (direct cast)
+  "String?", "Int?", etc.            → optional primitive
+  "[Foo]"                            → array (index traversal, AgentDispatchable elements)
+  "[String]", "[Int]", etc.          → array of primitives
+  any other single identifier        → child state (as? AgentDispatchable at runtime)
+  missing annotation                 → skip
+
+Method param types:
+  "String", "Int", "Double", "Bool"  → direct cast
+  any other type with label          → __agentDecode<T>() (must be Decodable — compiler enforces)
+  unlabeled ("_")                    → skip entire method
+
+Method return types:
+  Void / omitted                     → .value(nil)
+  "String", "Int", "Double", "Bool"  → .value(result)
+  "[String: Any]?"                   → .value(result)
+  any other type                     → .value(__agentEncode(result)) (must be Encodable — compiler enforces)
 ```
 
-No type inference. No type alias resolution. No cross-file lookups. Just string matching on the annotation token.
+No type inference. No type alias resolution. No cross-file lookups. Just string matching on the annotation token. Codable conformance is enforced by the compiler, not the macro.
 
 ---
 
@@ -362,16 +377,51 @@ case "openBook":
 
 The macro generates type-appropriate casting from JSON:
 
-| Swift type | JSON casting |
+| Swift type | Macro generates |
 |---|---|
-| `String` | `as? String` |
-| `Int` | `(as? NSNumber)?.intValue` |
-| `Double` | `(as? NSNumber)?.doubleValue` |
-| `Bool` | `(as? NSNumber)?.boolValue` |
-| `[String: Any]` | `as? [String: Any]` |
-| `[Any]` | `as? [Any]` |
+| `String` | `params["x"] as? String` |
+| `Int` | `(params["x"] as? NSNumber)?.intValue` |
+| `Double` | `(params["x"] as? NSNumber)?.doubleValue` |
+| `Bool` | `(params["x"] as? NSNumber)?.boolValue` |
+| Any other type | `__agentDecode<T>(params["x"])` — T must be `Decodable` |
 
-No ObjC type constraints. Methods use normal Swift types and return whatever they want — the SDK serializes the result.
+### Return Type Handling
+
+| Return type | Macro generates |
+|---|---|
+| `Void` / omitted | `.value(nil)` |
+| `String`, `Int`, `Double`, `Bool` | `.value(result)` |
+| `[String: Any]?` | `.value(result)` |
+| Any other type | `.value(__agentEncode(result))` — must be `Encodable` |
+
+The compiler enforces Codable conformance — no runtime check needed. If a type isn't Codable, you get a compile error in the generated extension, which tells you exactly what to fix.
+
+### Codable Example
+
+```swift
+struct Point: Codable {
+    var x: Double
+    var y: Double
+}
+
+// Source:
+func moveTo(point: Point) -> Point { ... }
+
+// Generated:
+case "moveTo":
+    guard let pointRaw = params["point"],
+          let point: Point = __agentDecode(pointRaw) else {
+        return .error("cannot decode param: point (Point)")
+    }
+    let result = moveTo(point: point)
+    return .value(__agentEncode(result))
+```
+
+Agent sends:
+```bash
+curl localhost:9876/request -d '{"type":"call","method":"moveTo","params":{"point":{"x":10.0,"y":20.0}}}'
+# → {"data": {"x": 15.0, "y": 25.0}}
+```
 
 ### Which Methods Are Dispatched
 
@@ -380,6 +430,7 @@ The macro generates dispatch for methods that:
 - Are not private/fileprivate
 - Are not property accessors (getters/setters)
 - Are not overrides of standard methods (init, deinit, etc.)
+- Have all params labeled (no `_`)
 
 If you want to exclude a method from agent dispatch, mark it `private`.
 
