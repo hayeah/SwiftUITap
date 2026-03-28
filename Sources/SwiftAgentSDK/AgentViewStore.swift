@@ -73,54 +73,30 @@ public final class AgentViewStore {
     // MARK: - Tree
 
     func tree(id: String?) -> AgentResult {
-        // Build flat list of nodes
-        var nodes: [(id: String, frame: CGRect, proposed: LayoutInfo?, viewClass: String?)] = []
+        // Build flat list of nodes with absolute frames (offset to match screenshot coordinates)
+        let offset = contentOffset
+        var absFrames: [String: CGRect] = [:]
+        var nodes: [(id: String, frame: CGRect, proposed: LayoutInfo?)] = []
         for (nodeID, frame) in frames {
+            let absFrame = frame.offsetBy(dx: offset.x, dy: offset.y)
+            absFrames[nodeID] = absFrame
             let layout = layoutInfo[nodeID]
-            let viewClass = findViewClass(for: nodeID)
-            nodes.append((id: nodeID, frame: frame, proposed: layout, viewClass: viewClass))
+            nodes.append((id: nodeID, frame: absFrame, proposed: layout))
         }
 
         // Sort by area descending (largest first) for containment check
         nodes.sort { $0.frame.width * $0.frame.height > $1.frame.width * $1.frame.height }
 
-        // Build tree from spatial containment
-        var nodeMap: [String: [String: Any]] = [:]
-        var childrenMap: [String: [[String: Any]]] = [:]
-        var parentMap: [String: String] = [:] // child -> parent
-
-        for node in nodes {
-            var dict: [String: Any] = [
-                "id": node.id,
-                "frame": rectToDict(node.frame),
-            ]
-            if let layout = node.proposed {
-                dict["proposed"] = [
-                    "w": layout.proposedWidth.map { $0 as Any } ?? NSNull(),
-                    "h": layout.proposedHeight.map { $0 as Any } ?? NSNull(),
-                ] as [String: Any]
-                dict["reported"] = [
-                    "w": layout.reported.width,
-                    "h": layout.reported.height,
-                ]
-            }
-            dict["viewClass"] = node.viewClass as Any
-            nodeMap[node.id] = dict
-            childrenMap[node.id] = []
-        }
-
-        // Assign children: for each node (smallest first), find the smallest containing parent
+        // Build parent map from spatial containment
+        var parentMap: [String: String] = [:]
         let sortedByAreaAsc = nodes.reversed()
         for node in sortedByAreaAsc {
-            // Find smallest node that contains this one (and isn't itself)
             var bestParent: String?
             var bestArea: CGFloat = .infinity
             for candidate in nodes {
                 if candidate.id == node.id { continue }
-                let cf = candidate.frame
-                let nf = node.frame
-                let area = cf.width * cf.height
-                if cf.contains(nf) && area < bestArea {
+                let area = candidate.frame.width * candidate.frame.height
+                if candidate.frame.contains(node.frame) && area < bestArea {
                     bestArea = area
                     bestParent = candidate.id
                 }
@@ -130,44 +106,68 @@ public final class AgentViewStore {
             }
         }
 
-        // Build children lists
+        // Collect children per parent
+        var childrenIDs: [String: [String]] = [:]
+        for node in nodes { childrenIDs[node.id] = [] }
         for (child, parent) in parentMap {
-            if var children = childrenMap[parent] {
-                children.append(nodeMap[child]!)
-                childrenMap[parent] = children
+            childrenIDs[parent]?.append(child)
+        }
+
+        // Build tree recursively with relative frames
+        func buildNode(_ nodeID: String) -> [String: Any] {
+            let absFrame = absFrames[nodeID]!
+            let layout = layoutInfo[nodeID]
+            let parentID = parentMap[nodeID]
+            let parentFrame = parentID.flatMap { absFrames[$0] }
+
+            var dict: [String: Any] = [
+                "id": nodeID,
+                "frame": rectToDict(absFrame),
+            ]
+
+            // Relative frame: position relative to parent's origin
+            if let pf = parentFrame {
+                dict["relativeFrame"] = rectToDict(CGRect(
+                    x: absFrame.origin.x - pf.origin.x,
+                    y: absFrame.origin.y - pf.origin.y,
+                    width: absFrame.width,
+                    height: absFrame.height
+                ))
             }
+
+            if let layout = layout {
+                dict["proposed"] = [
+                    "w": layout.proposedWidth.map { $0 as Any } ?? NSNull(),
+                    "h": layout.proposedHeight.map { $0 as Any } ?? NSNull(),
+                ] as [String: Any]
+                dict["reported"] = [
+                    "w": layout.reported.width,
+                    "h": layout.reported.height,
+                ]
+            }
+
+            let kids = (childrenIDs[nodeID] ?? []).map { buildNode($0) }
+            if !kids.isEmpty {
+                dict["children"] = kids
+            }
+            return dict
         }
 
         // Find roots (nodes with no parent)
         let rootIDs = nodes.map(\.id).filter { parentMap[$0] == nil }
 
-        // Attach children recursively
-        func buildNode(_ nodeID: String) -> [String: Any] {
-            var node = nodeMap[nodeID]!
-            let children = (childrenMap[nodeID] ?? []).map { child -> [String: Any] in
-                let childID = child["id"] as! String
-                return buildNode(childID)
-            }
-            if !children.isEmpty {
-                node["children"] = children
-            }
-            return node
-        }
-
         // If scoped to a specific id, return that subtree
         if let id = id {
-            guard nodeMap[id] != nil else {
+            guard absFrames[id] != nil else {
                 return .error("unknown view id: \(id)")
             }
             return .value(buildNode(id))
         }
 
-        // Return full tree (single root or array of roots)
         if rootIDs.count == 1 {
             return .value(buildNode(rootIDs[0]))
         }
-        let roots = rootIDs.map { buildNode($0) }
-        return .value(roots)
+        return .value(rootIDs.map { buildNode($0) })
     }
 
     // MARK: - Screenshot
