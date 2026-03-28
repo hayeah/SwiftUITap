@@ -123,6 +123,59 @@ async function processScreenshot(
   return data;
 }
 
+// Round a number to 1 decimal place
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
+}
+
+// Round all numeric values in a rect object
+function roundRect(rect: any): any {
+  if (!rect) return rect;
+  return {
+    x: round1(rect.x),
+    y: round1(rect.y),
+    w: round1(rect.w),
+    h: round1(rect.h),
+  };
+}
+
+// Normalize a tree node: round numbers, sort children by y then x
+function normalizeTree(node: any): void {
+  if (!node) return;
+
+  // Handle array of roots
+  if (Array.isArray(node)) {
+    node.forEach(normalizeTree);
+    node.sort((a: any, b: any) => (a.frame?.y ?? 0) - (b.frame?.y ?? 0));
+    return;
+  }
+
+  if (node.frame) node.frame = roundRect(node.frame);
+  if (node.relativeFrame) node.relativeFrame = roundRect(node.relativeFrame);
+  if (node.proposed) {
+    node.proposed = {
+      w: node.proposed.w != null ? round1(node.proposed.w) : null,
+      h: node.proposed.h != null ? round1(node.proposed.h) : null,
+    };
+  }
+  if (node.reported) {
+    node.reported = {
+      w: round1(node.reported.w),
+      h: round1(node.reported.h),
+    };
+  }
+
+  if (node.children) {
+    node.children.forEach(normalizeTree);
+    // Sort siblings: top to bottom, then left to right
+    node.children.sort((a: any, b: any) => {
+      const dy = (a.frame?.y ?? 0) - (b.frame?.y ?? 0);
+      if (Math.abs(dy) > 1) return dy;
+      return (a.frame?.x ?? 0) - (b.frame?.x ?? 0);
+    });
+  }
+}
+
 Bun.serve({
   port,
 
@@ -197,6 +250,15 @@ Bun.serve({
         const processed = await processScreenshot(result.data, request);
         log("→ agent response", request._reqID, "(screenshot processed)");
         return Response.json({ data: processed });
+      }
+
+      // Post-process tree: sort siblings by y, round numbers
+      if (
+        url.pathname === "/view" &&
+        request.type === "tree" &&
+        result.data
+      ) {
+        normalizeTree(result.data);
       }
 
       // Strip internal fields from the response
