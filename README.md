@@ -77,7 +77,7 @@ final class TodoItem: Identifiable {
 }
 ```
 
-Wire it up in your App:
+Wire it up in your App (with view inspection):
 
 ```swift
 private let sharedAppState = AppState()
@@ -88,34 +88,138 @@ struct MyApp: App {
         WindowGroup {
             ContentView()
                 .environment(sharedAppState)
+                .agentInspectable()  // enables view tree + screenshots
                 .onAppear {
+                    #if DEBUG
                     SwiftAgentSDK.poll(state: sharedAppState, server: "http://localhost:9876")
+                    #endif
                 }
         }
     }
 }
 ```
 
-Start the server and use curl:
+Tag views for inspection:
+
+```swift
+struct ContentView: View {
+    var body: some View {
+        VStack {
+            TextField("Search", text: $query)
+                .agentID("searchField")
+            List { ... }
+                .agentID("todoList")
+            Button("Add") { ... }
+                .agentID("addButton")
+        }
+        .agentID("root")
+    }
+}
+```
+
+## CLI: `swiftui-tap`
+
+Install the CLI (requires [Bun](https://bun.sh)):
 
 ```bash
-# Start the relay server
-cd server && bun run index.ts --port 9876
+cd server && bun link && bun link swiftui-tap
+```
 
+Start the server:
+
+```bash
+swiftui-tap server --port 9876
+```
+
+### State control
+
+```bash
 # Read the doc string
-curl localhost:9876/request -d '{"type":"get","path":"__doc__"}'
+swiftui-tap state get __doc__
 
 # Read a property
-curl localhost:9876/request -d '{"type":"get","path":"counter"}'
-
-# Set a property
-curl localhost:9876/request -d '{"type":"set","path":"counter","value":42}'
-
-# Call a method
-curl localhost:9876/request -d '{"type":"call","method":"addTodo","params":{"title":"Buy milk"}}'
+swiftui-tap state get counter
 
 # Snapshot the whole state tree
-curl localhost:9876/request -d '{"type":"get","path":"."}'
+swiftui-tap state get .
+
+# Set a property
+swiftui-tap state set counter 42
+
+# Call a method
+swiftui-tap state call addTodo title="Buy milk"
+
+# Call with multiple params
+swiftui-tap state call openBook bookID="abc" chapter=0
+```
+
+### View inspection
+
+```bash
+# Dump the view hierarchy (text)
+swiftui-tap view tree
+
+# Dump as JSON
+swiftui-tap view tree --json
+
+# Scope to a subtree
+swiftui-tap view tree ContentView.todoList
+
+# Full app screenshot
+swiftui-tap view screenshot
+
+# Screenshot cropped to a tagged view
+swiftui-tap view screenshot ContentView.todoList -o todolist.png
+
+# JPEG with quality
+swiftui-tap view screenshot -f jpg -q 0.8 -o screen.jpg
+```
+
+### Example tree output
+
+```
+ContentView.root  (0,168 402x672)
+     proposed=402x672  reported=402x672
+   ├─ ContentView.inputBar  (0,168 402x66)
+   │    rel=(0,0)  proposed=402x224  reported=402x66
+   │  ├─ ContentView.input  (16,184 336x34)
+   │  │    rel=(16,16)  proposed=336x192  reported=336x34
+   │  └─ ContentView.addButton  (360,188 26x25)
+   │       rel=(360,20)  proposed=181x192  reported=26x25
+   ├─ ContentView.todoList  (0,234 402x574)
+   │    rel=(0,66)  proposed=402x574  reported=402x574
+   └─ ContentView.footer  (0,808 402x32)
+        rel=(0,640)  proposed=402x303  reported=402x32
+      └─ ContentView.clearButton  (286,816 100x16)
+           rel=(286,8)  proposed=303x287  reported=100x16
+```
+
+Each node shows:
+- `frame` — absolute position from screenshot origin (matches pixel coordinates for cropping)
+- `rel` — position relative to parent (shows padding/spacing)
+- `proposed` — what the parent offered in the layout negotiation
+- `reported` — what the view claimed to need
+
+### Environment variable
+
+Set `SWIFTUI_TAP_URL` to point to a different server:
+
+```bash
+export SWIFTUI_TAP_URL=http://192.168.1.5:9876
+swiftui-tap state get .
+```
+
+### curl (without the CLI)
+
+```bash
+# State: get/set/call via POST /request
+curl localhost:9876/request -d '{"type":"get","path":"counter"}'
+curl localhost:9876/request -d '{"type":"set","path":"counter","value":42}'
+curl localhost:9876/request -d '{"type":"call","method":"addTodo","params":{"title":"Buy milk"}}'
+
+# View: tree/screenshot via POST /view
+curl localhost:9876/view -d '{"type":"tree"}'
+curl localhost:9876/view -d '{"type":"screenshot","id":"ContentView.todoList"}' | jq -r .data.image | base64 -d > todo.png
 ```
 
 ## Coding Convention
@@ -307,16 +411,18 @@ var __doc__: String {
 ## Architecture
 
 ```
-┌──────────┐  POST /poll    ┌────────────┐  POST /request
-│  App     │ ─────────────→ │   Server   │ ←──────────── Agent (curl)
-│ (client) │ ←── request ── │ (Bun/TS)   │ ── response →
-└──────────┘ ── response ─→ └────────────┘
+┌──────────┐  POST /poll    ┌────────────┐  POST /request    ┌───────────┐
+│  App     │ ─────────────→ │   Server   │ ←──────────────── │ Agent     │
+│ (client) │ ←── request ── │ (Bun/TS)   │ ── response ───→ │ (CLI/curl)│
+└──────────┘ ── response ─→ │            │ ←─ POST /view ─── │           │
+                             └────────────┘ ── tree/screenshot→└───────────┘
 ```
 
-The app is an HTTP **client** that long-polls the server. The agent sends commands via `POST /request`. The server pairs them.
+The app is an HTTP **client** that long-polls the server. The agent sends commands via `POST /request` (state) or `POST /view` (view inspection). The server pairs them.
 
+- `POST /request` — state operations: get/set/call on `@AgentSDK` properties
+- `POST /view` — view inspection: tree hierarchy dump, screenshots (full or cropped)
 - No server on the phone — avoids iOS sandbox issues
-- No CLI wrapper needed — just `curl`
 - Works with simulator and on-device (phone polls dev machine)
 
 ## App Setup
@@ -362,13 +468,13 @@ The `poll()` call should also be behind `#if DEBUG` (see App Setup above). In re
 
 ## Server
 
-A minimal Bun/TypeScript HTTP server that pairs agent requests with app polls:
+The relay server is built into the `swiftui-tap` CLI:
 
 ```bash
-cd server && bun run index.ts --port 9876
+swiftui-tap server --port 9876
 
 # With debug logging
-cd server && bun run index.ts --port 9876 --debug
+swiftui-tap server --port 9876 --debug
 
 # Health check
 curl localhost:9876/health
@@ -399,13 +505,19 @@ SwiftAgentSDK/
 │   │   ├── AgentDispatchable.swift      # Protocol, AgentResult, @AgentSDK macro decl
 │   │   ├── AgentPath.swift              # Dot-path splitting
 │   │   ├── Poller.swift                 # URLSession long-poll loop
-│   │   └── Dispatcher.swift             # Routes get/set/call
+│   │   ├── Dispatcher.swift             # Routes get/set/call
+│   │   ├── AgentID.swift                # .agentID() view modifier
+│   │   ├── AgentInspectable.swift       # .agentInspectable() root modifier
+│   │   ├── AgentViewStore.swift         # View tree + screenshot dispatch
+│   │   └── AgentViewFrameKey.swift      # PreferenceKey for anchor frames
 │   └── SwiftAgentSDKMacros/
 │       ├── AgentSDKMacro.swift          # ExtensionMacro (SwiftSyntax)
 │       └── Plugin.swift                 # CompilerPlugin entry point
 ├── server/
 │   ├── index.ts                         # Bun HTTP relay server
+│   ├── cli.ts                           # swiftui-tap CLI
 │   └── package.json
 └── Examples/
-    └── TodoList/                        # Working macOS example app
+    ├── TodoList/                        # macOS example app
+    └── TodoListiOS/                     # iOS example app
 ```
