@@ -1,0 +1,12 @@
+{
+  "name": "agentsdk-server",
+  "version": "0.1.0",
+  "description": "Minimal HTTP server that pairs agent requests with app long-polls",
+  "type": "module",
+  "bin": {
+    "agentsdk-server": "./index.ts"
+  },
+  "scripts": {
+    "start": "bun run index.ts"
+  }
+}
