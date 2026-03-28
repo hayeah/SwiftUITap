@@ -15,6 +15,7 @@ struct Dispatcher {
             guard let path = request["path"] as? String else {
                 return .error("missing 'path' for get")
             }
+            if path == "." { return .value(state.__agentSnapshot()) }
             return state.__agentGet(path)
 
         case "set":
