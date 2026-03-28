@@ -139,41 +139,47 @@ function roundRect(rect: any): any {
   };
 }
 
-// Normalize a tree node: round numbers, sort children by y then x
-function normalizeTree(node: any): void {
-  if (!node) return;
+// Normalize a tree node: round numbers, sort children, consistent property order.
+// Returns a new object (does not mutate in place).
+function normalizeTree(node: any): any {
+  if (!node) return node;
 
-  // Handle array of roots
   if (Array.isArray(node)) {
-    node.forEach(normalizeTree);
-    node.sort((a: any, b: any) => (a.frame?.y ?? 0) - (b.frame?.y ?? 0));
-    return;
+    return node
+      .map(normalizeTree)
+      .sort((a: any, b: any) => (a.frame?.y ?? 0) - (b.frame?.y ?? 0));
   }
 
-  if (node.frame) node.frame = roundRect(node.frame);
-  if (node.relativeFrame) node.relativeFrame = roundRect(node.relativeFrame);
+  // Rebuild with consistent property order
+  const out: any = { id: node.id };
+
+  if (node.frame) out.frame = roundRect(node.frame);
+  if (node.relativeFrame) out.relativeFrame = roundRect(node.relativeFrame);
+
   if (node.proposed) {
-    node.proposed = {
+    out.proposed = {
       w: node.proposed.w != null ? round1(node.proposed.w) : null,
       h: node.proposed.h != null ? round1(node.proposed.h) : null,
     };
   }
   if (node.reported) {
-    node.reported = {
+    out.reported = {
       w: round1(node.reported.w),
       h: round1(node.reported.h),
     };
   }
 
   if (node.children) {
-    node.children.forEach(normalizeTree);
-    // Sort siblings: top to bottom, then left to right
-    node.children.sort((a: any, b: any) => {
-      const dy = (a.frame?.y ?? 0) - (b.frame?.y ?? 0);
-      if (Math.abs(dy) > 1) return dy;
-      return (a.frame?.x ?? 0) - (b.frame?.x ?? 0);
-    });
+    out.children = node.children
+      .map(normalizeTree)
+      .sort((a: any, b: any) => {
+        const dy = (a.frame?.y ?? 0) - (b.frame?.y ?? 0);
+        if (Math.abs(dy) > 1) return dy;
+        return (a.frame?.x ?? 0) - (b.frame?.x ?? 0);
+      });
   }
+
+  return out;
 }
 
 Bun.serve({
@@ -252,13 +258,13 @@ Bun.serve({
         return Response.json({ data: processed });
       }
 
-      // Post-process tree: sort siblings by y, round numbers
+      // Post-process tree: sort siblings by y, round numbers, consistent key order
       if (
         url.pathname === "/view" &&
         request.type === "tree" &&
         result.data
       ) {
-        normalizeTree(result.data);
+        result.data = normalizeTree(result.data);
       }
 
       // Strip internal fields from the response
