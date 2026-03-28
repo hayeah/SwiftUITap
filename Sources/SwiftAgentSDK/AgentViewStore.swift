@@ -28,6 +28,10 @@ public final class AgentViewStore {
     public weak var rootView: UIView?
     #endif
 
+    /// Offset from rootView origin to SwiftUI content origin.
+    /// SwiftUI frame coordinates need this offset added to match UIView coordinates.
+    public var contentOffset: CGPoint = .zero
+
     public struct LayoutInfo {
         public var proposedWidth: CGFloat?
         public var proposedHeight: CGFloat?
@@ -59,6 +63,8 @@ public final class AgentViewStore {
             return platformSet(request)
         case "call":
             return platformCall(request)
+        case "debug":
+            return debugViewHierarchy()
         default:
             return .error("unknown view type: \(type)")
         }
@@ -242,7 +248,7 @@ public final class AgentViewStore {
         guard let id = request["id"] as? String else {
             return .error("get requires 'id'")
         }
-        guard let view = findPlatformView(byIdentifier: id) else {
+        guard let view = findPlatformView(forAgentID: id) else {
             return .error("no backing view for id: \(id)")
         }
         let viewClass = String(describing: type(of: view))
@@ -268,7 +274,7 @@ public final class AgentViewStore {
         guard let id = request["id"] as? String else {
             return .error("set requires 'id'")
         }
-        guard let view = findPlatformView(byIdentifier: id) else {
+        guard let view = findPlatformView(forAgentID: id) else {
             return .error("no backing view for id: \(id)")
         }
         guard let path = request["path"] as? String else {
@@ -283,7 +289,7 @@ public final class AgentViewStore {
         guard let id = request["id"] as? String else {
             return .error("call requires 'id'")
         }
-        guard let view = findPlatformView(byIdentifier: id) else {
+        guard let view = findPlatformView(forAgentID: id) else {
             return .error("no backing view for id: \(id)")
         }
         guard let method = request["method"] as? String else {
@@ -299,47 +305,139 @@ public final class AgentViewStore {
         return .value(["viewClass": viewClass])
     }
 
+    // MARK: - Debug
+
+    func debugViewHierarchy() -> AgentResult {
+        guard let root = rootView else {
+            return .error("no root view — rootView is nil")
+        }
+        var entries: [[String: Any]] = []
+        walkViewTree(root, depth: 0, entries: &entries)
+        return .value([
+            "rootType": String(describing: type(of: root)),
+            "viewCount": entries.count,
+            "views": entries,
+        ])
+    }
+
+    #if canImport(AppKit)
+    private func walkViewTree(_ view: NSView, depth: Int, entries: inout [[String: Any]]) {
+        var entry: [String: Any] = [
+            "depth": depth,
+            "class": String(describing: type(of: view)),
+            "frame": rectToDict(view.frame),
+        ]
+        let aid = view.accessibilityIdentifier() as String?
+        if let aid, !aid.isEmpty {
+            entry["accessibilityIdentifier"] = aid
+        }
+        entries.append(entry)
+        for subview in view.subviews {
+            walkViewTree(subview, depth: depth + 1, entries: &entries)
+        }
+    }
+    #elseif canImport(UIKit)
+    private func walkViewTree(_ view: UIView, depth: Int, entries: inout [[String: Any]]) {
+        var entry: [String: Any] = [
+            "depth": depth,
+            "class": String(describing: type(of: view)),
+            "frame": rectToDict(view.frame),
+        ]
+        if let aid = view.accessibilityIdentifier, !aid.isEmpty {
+            entry["accessibilityIdentifier"] = aid
+        }
+        entries.append(entry)
+        for subview in view.subviews {
+            walkViewTree(subview, depth: depth + 1, entries: &entries)
+        }
+    }
+    #endif
+
     // MARK: - Helpers
 
+    /// Find the backing platform view for a tagged agentID.
+    /// Strategy: match the agentID's resolved frame against UIView/NSView frames.
+    /// The closest-sized view whose frame overlaps the agentID frame is returned.
     private func findViewClass(for id: String) -> String? {
-        guard let view = findPlatformView(byIdentifier: id) else { return nil }
+        guard let view = findPlatformView(forAgentID: id) else { return nil }
         return String(describing: type(of: view))
     }
 
     #if canImport(AppKit)
-    private func findPlatformView(byIdentifier id: String) -> NSView? {
-        guard let root = rootView else { return nil }
-        return findDescendant(of: root) { view in
-            // NSView accessibility identifier via NSAccessibility protocol
-            view.accessibilityIdentifier() == id
-        }
+    private func findPlatformView(forAgentID id: String) -> NSView? {
+        guard let root = rootView, let swiftuiFrame = frames[id] else { return nil }
+        // Offset SwiftUI frame to rootView coordinates
+        let targetFrame = swiftuiFrame.offsetBy(dx: contentOffset.x, dy: contentOffset.y)
+        return findBestMatch(in: root, targetFrame: targetFrame)
     }
 
-    private func findDescendant(of view: NSView, where predicate: (NSView) -> Bool) -> NSView? {
-        if predicate(view) { return view }
-        for subview in view.subviews {
-            if let found = findDescendant(of: subview, where: predicate) {
-                return found
-            }
+    private func findBestMatch(in root: NSView, targetFrame: CGRect) -> NSView? {
+        var best: NSView?
+        var bestScore: CGFloat = .infinity
+        findBestMatchRecursive(root, targetFrame: targetFrame, best: &best, bestScore: &bestScore)
+        return best
+    }
+
+    private func findBestMatchRecursive(_ view: NSView, targetFrame: CGRect, depth: Int = 0, best: inout NSView?, bestScore: inout CGFloat) {
+        guard !view.isHidden, view.frame.width > 0, view.frame.height > 0 else { return }
+
+        let frameInRoot = view.superview?.convert(view.frame, to: rootView) ?? view.frame
+
+        let viewType = String(describing: type(of: view))
+        let score = frameMatchScore(frameInRoot, targetFrame, depth: depth)
+        if score < bestScore && score < 40 && !isSwiftUIWrapper(viewType) {
+            bestScore = score
+            best = view
         }
-        return nil
+        for subview in view.subviews {
+            findBestMatchRecursive(subview, targetFrame: targetFrame, depth: depth + 1, best: &best, bestScore: &bestScore)
+        }
     }
     #elseif canImport(UIKit)
-    private func findPlatformView(byIdentifier id: String) -> UIView? {
-        guard let root = rootView else { return nil }
-        return findDescendant(of: root) { $0.accessibilityIdentifier == id }
+    private func findPlatformView(forAgentID id: String) -> UIView? {
+        guard let root = rootView, let swiftuiFrame = frames[id] else { return nil }
+        let targetFrame = swiftuiFrame.offsetBy(dx: contentOffset.x, dy: contentOffset.y)
+        return findBestMatch(in: root, targetFrame: targetFrame)
     }
 
-    private func findDescendant(of view: UIView, where predicate: (UIView) -> Bool) -> UIView? {
-        if predicate(view) { return view }
-        for subview in view.subviews {
-            if let found = findDescendant(of: subview, where: predicate) {
-                return found
-            }
+    private func findBestMatch(in root: UIView, targetFrame: CGRect) -> UIView? {
+        var best: UIView?
+        var bestScore: CGFloat = .infinity
+        findBestMatchRecursive(root, targetFrame: targetFrame, best: &best, bestScore: &bestScore)
+        return best
+    }
+
+    private func findBestMatchRecursive(_ view: UIView, targetFrame: CGRect, depth: Int = 0, best: inout UIView?, bestScore: inout CGFloat) {
+        guard !view.isHidden, view.frame.width > 0, view.frame.height > 0 else { return }
+
+        let frameInRoot = view.superview?.convert(view.frame, to: rootView) ?? view.frame
+
+        let viewType = String(describing: type(of: view))
+        let score = frameMatchScore(frameInRoot, targetFrame, depth: depth)
+        if score < bestScore && score < 40 && !isSwiftUIWrapper(viewType) {
+            bestScore = score
+            best = view
         }
-        return nil
+        for subview in view.subviews {
+            findBestMatchRecursive(subview, targetFrame: targetFrame, depth: depth + 1, best: &best, bestScore: &bestScore)
+        }
     }
     #endif
+
+    /// Score how well two frames match. Lower = better. 0 = exact match.
+    private func frameMatchScore(_ a: CGRect, _ b: CGRect, depth: Int = 0) -> CGFloat {
+        let posScore = abs(a.origin.x - b.origin.x) + abs(a.origin.y - b.origin.y)
+        let sizeScore = (abs(a.size.width - b.size.width) + abs(a.size.height - b.size.height)) * 0.5
+        return posScore + sizeScore
+    }
+
+    /// Returns true if this view is a SwiftUI internal wrapper (not a "real" UIKit view).
+    private func isSwiftUIWrapper(_ viewType: String) -> Bool {
+        viewType.contains("PlatformViewHost") ||
+        viewType.contains("HostingView") ||
+        viewType.contains("ViewControllerWrapper") ||
+        viewType.contains("TransitionView")
+    }
 
     private func rectToDict(_ rect: CGRect) -> [String: CGFloat] {
         ["x": rect.origin.x, "y": rect.origin.y, "w": rect.size.width, "h": rect.size.height]
