@@ -1,7 +1,9 @@
 import Foundation
 import SwiftAgentSDK
 
+#if DEBUG
 @AgentSDK
+#endif
 @Observable
 final class TodoItem: Identifiable {
     let id: String = UUID().uuidString

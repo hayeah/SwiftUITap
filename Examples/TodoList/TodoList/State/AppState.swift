@@ -2,7 +2,9 @@ import Foundation
 import SwiftUI
 import SwiftAgentSDK
 
+#if DEBUG
 @AgentSDK
+#endif
 @Observable
 final class AppState {
     var __doc__: String {

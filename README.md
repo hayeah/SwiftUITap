@@ -16,7 +16,9 @@ Add the SPM dependency, then mark your state classes:
 ```swift
 import SwiftAgentSDK
 
+#if DEBUG
 @AgentSDK
+#endif
 @Observable
 final class AppState {
     var counter: Int = 0
@@ -51,14 +53,18 @@ final class AppState {
     }
 }
 
+#if DEBUG
 @AgentSDK
+#endif
 @Observable
 final class SettingsState {
     var darkMode: Bool = false
     var fontSize: Int = 16
 }
 
+#if DEBUG
 @AgentSDK
+#endif
 @Observable
 final class TodoItem: Identifiable {
     let id: String = UUID().uuidString
@@ -119,7 +125,9 @@ The macro generates dispatch code by parsing your class syntax. It needs **expli
 ### Properties
 
 ```swift
+#if DEBUG
 @AgentSDK
+#endif
 @Observable
 final class AppState {
     // SUPPORTED — explicit type annotation
@@ -155,7 +163,9 @@ final class AppState {
 ### Methods
 
 ```swift
+#if DEBUG
 @AgentSDK
+#endif
 @Observable
 final class AppState {
     // SUPPORTED — labeled params, any type
@@ -314,7 +324,6 @@ The app is an HTTP **client** that long-polls the server. The agent sends comman
 **Do NOT call `SwiftAgentSDK.poll()` in `init()`.** SwiftUI's `@State` isn't wired up during `init()`, so you'd be polling on a throwaway instance. Use a global instance or `.onAppear`:
 
 ```swift
-// Global instance — simplest
 private let sharedState = AppState()
 
 @main
@@ -324,18 +333,32 @@ struct MyApp: App {
             ContentView()
                 .environment(sharedState)
                 .onAppear {
-                    SwiftAgentSDK.poll(state: sharedState, server: "http://localhost:9876")
+                    #if DEBUG
+                    let url = ProcessInfo.processInfo.environment["AGENTSDK_URL"]
+                        ?? "http://localhost:9876"
+                    SwiftAgentSDK.poll(state: sharedState, server: url)
+                    #endif
                 }
         }
     }
 }
 ```
 
-The server URL can come from an environment variable:
+## Disabling for Production
+
+Wrap `@AgentSDK` in `#if DEBUG` so release builds have zero agent overhead — no dispatch code, no protocol conformance:
 
 ```swift
-let url = ProcessInfo.processInfo.environment["AGENTSDK_URL"] ?? "http://localhost:9876"
+#if DEBUG
+@AgentSDK
+#endif
+@Observable
+final class AppState {
+    ...
+}
 ```
+
+The `poll()` call should also be behind `#if DEBUG` (see App Setup above). In release builds, the macro is stripped entirely and the classes are plain `@Observable` with no agent code.
 
 ## Server
 
