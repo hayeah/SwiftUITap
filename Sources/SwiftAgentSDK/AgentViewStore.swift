@@ -198,9 +198,11 @@ public final class AgentViewStore {
 
         // Include frames so server can crop
         if request["id"] != nil {
+            // Send offset-adjusted frames so server can crop correctly
+            let offset = contentOffset
             var framesDict: [String: Any] = [:]
             for (id, frame) in frames {
-                framesDict[id] = rectToDict(frame)
+                framesDict[id] = rectToDict(frame.offsetBy(dx: offset.x, dy: offset.y))
             }
             result["frames"] = framesDict
         }
@@ -232,9 +234,11 @@ public final class AgentViewStore {
         ]
 
         if request["id"] != nil {
+            // Send offset-adjusted frames so server can crop correctly
+            let offset = contentOffset
             var framesDict: [String: Any] = [:]
             for (id, frame) in frames {
-                framesDict[id] = rectToDict(frame)
+                framesDict[id] = rectToDict(frame.offsetBy(dx: offset.x, dy: offset.y))
             }
             result["frames"] = framesDict
         }
