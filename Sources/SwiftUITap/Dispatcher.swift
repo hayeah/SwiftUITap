@@ -6,6 +6,11 @@ struct Dispatcher {
 
     @MainActor
     func dispatch(_ request: [String: Any]) -> TapResult {
+        // Intercept dot-prefixed paths for built-in system objects
+        if let result = dispatchBuiltin(request) {
+            return result
+        }
+
         guard let type = request["type"] as? String else {
             return .error("missing 'type' field")
         }
@@ -34,5 +39,24 @@ struct Dispatcher {
         default:
             return .error("unknown type: \(type)")
         }
+    }
+
+    /// Route dot-prefixed paths to built-in system dispatchers.
+    @MainActor
+    private func dispatchBuiltin(_ request: [String: Any]) -> TapResult? {
+        let type = request["type"] as? String ?? ""
+        let path = (type == "call")
+            ? request["method"] as? String
+            : request["path"] as? String
+
+        guard let path, path.hasPrefix(".") else { return nil }
+
+        #if canImport(AppKit) && !targetEnvironment(macCatalyst)
+        if path.hasPrefix(".windows") {
+            return TapWindowStore.dispatch(request)
+        }
+        #endif
+
+        return .error("unknown system path: \(path)")
     }
 }
