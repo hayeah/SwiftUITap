@@ -235,68 +235,100 @@ func paramTypeString(_ type: TypeSyntax) -> String? {
     return type.trimmedDescription
 }
 
+// MARK: - CodeBuilder
+
+class CodeBuilder {
+    private var lines: [String] = []
+    private var level = 0
+    private let tab = "    "
+
+    func line(_ text: String = "") {
+        if text.isEmpty {
+            lines.append("")
+        } else {
+            lines.append(String(repeating: tab, count: level) + text)
+        }
+    }
+
+    func indented(_ body: () -> Void) {
+        level += 1
+        body()
+        level -= 1
+    }
+
+    func build() -> String {
+        lines.joined(separator: "\n")
+    }
+}
+
 // MARK: - Code Generation
 
 func generateAgentGet(properties: [PropertyInfo]) -> String {
-    var cases: [String] = []
+    let b = CodeBuilder()
 
     for prop in properties {
         switch prop.category {
         case .primitive, .optionalPrimitive:
-            cases.append("""
-                        case "\(prop.name)": return .value(\(prop.name))
-            """)
+            b.line("case \"\(prop.name)\": return .value(\(prop.name))")
 
         case .array(let elementType):
             if primitiveTypes.contains(elementType) {
-                // Primitive array — return directly
-                cases.append("""
-                        case "\(prop.name)":
-                            guard let tail else { return .value(\(prop.name)) }
-                            let (indexStr, rest) = TapPath.split(tail)
-                            guard let index = Int(indexStr), index >= 0, index < \(prop.name).count else {
-                                return .error("index out of bounds: \\(indexStr) (count: \\(\(prop.name).count))")
-                            }
-                            guard rest == nil else { return .error("cannot traverse into primitive array element") }
-                            return .value(\(prop.name)[index])
-                """)
+                b.line("case \"\(prop.name)\":")
+                b.indented {
+                    b.line("guard let tail else { return .value(\(prop.name)) }")
+                    b.line("let (indexStr, rest) = TapPath.split(tail)")
+                    b.line("guard let index = Int(indexStr), index >= 0, index < \(prop.name).count else {")
+                    b.indented {
+                        b.line("return .error(\"index out of bounds: \\(indexStr) (count: \\(\(prop.name).count))\")")
+                    }
+                    b.line("}")
+                    b.line("guard rest == nil else { return .error(\"cannot traverse into primitive array element\") }")
+                    b.line("return .value(\(prop.name)[index])")
+                }
             } else {
-                // Object array — support traversal
-                cases.append("""
-                        case "\(prop.name)":
-                            guard let tail else {
-                                return .value(\(prop.name).compactMap { ($0 as? TapDispatchable)?.__tapSnapshot() })
-                            }
-                            let (indexStr, rest) = TapPath.split(tail)
-                            guard let index = Int(indexStr), index >= 0, index < \(prop.name).count else {
-                                return .error("index out of bounds: \\(indexStr) (count: \\(\(prop.name).count))")
-                            }
-                            guard let rest else {
-                                return .value((\(prop.name)[index] as? TapDispatchable)?.__tapSnapshot())
-                            }
-                            return (\(prop.name)[index] as? TapDispatchable)?.__tapGet(rest) ?? .error("not dispatchable: \(prop.name)[]")
-                """)
+                b.line("case \"\(prop.name)\":")
+                b.indented {
+                    b.line("guard let tail else {")
+                    b.indented {
+                        b.line("return .value(\(prop.name).compactMap { ($0 as? TapDispatchable)?.__tapSnapshot() })")
+                    }
+                    b.line("}")
+                    b.line("let (indexStr, rest) = TapPath.split(tail)")
+                    b.line("guard let index = Int(indexStr), index >= 0, index < \(prop.name).count else {")
+                    b.indented {
+                        b.line("return .error(\"index out of bounds: \\(indexStr) (count: \\(\(prop.name).count))\")")
+                    }
+                    b.line("}")
+                    b.line("guard let rest else {")
+                    b.indented {
+                        b.line("return .value((\(prop.name)[index] as? TapDispatchable)?.__tapSnapshot())")
+                    }
+                    b.line("}")
+                    b.line("return (\(prop.name)[index] as? TapDispatchable)?.__tapGet(rest) ?? .error(\"not dispatchable: \(prop.name)[]\")")
+                }
             }
 
         case .childState:
-            cases.append("""
-                        case "\(prop.name)":
-                            guard let tail else {
-                                return .value((\(prop.name) as? TapDispatchable)?.__tapSnapshot())
-                            }
-                            return (\(prop.name) as? TapDispatchable)?.__tapGet(tail) ?? .error("not dispatchable: \(prop.name)")
-            """)
+            b.line("case \"\(prop.name)\":")
+            b.indented {
+                b.line("guard let tail else {")
+                b.indented {
+                    b.line("return .value((\(prop.name) as? TapDispatchable)?.__tapSnapshot())")
+                }
+                b.line("}")
+                b.line("return (\(prop.name) as? TapDispatchable)?.__tapGet(tail) ?? .error(\"not dispatchable: \(prop.name)\")")
+            }
 
         case .unsupported:
             continue
         }
     }
 
-    return cases.joined(separator: "\n")
+    return b.build()
 }
 
 func generateAgentSet(properties: [PropertyInfo]) -> String {
-    var cases: [String] = []
+    let b = CodeBuilder()
 
     for prop in properties {
         if prop.isReadOnly { continue }
@@ -304,120 +336,113 @@ func generateAgentSet(properties: [PropertyInfo]) -> String {
         switch prop.category {
         case .primitive(let typeName):
             let cast = castExpression(for: typeName, from: "value")
-            cases.append("""
-                        case "\(prop.name)":
-                            guard let v = \(cast) else { return .error("type mismatch: \(prop.name) expects \(typeName)") }
-                            \(prop.name) = v
-                            return .value(nil)
-            """)
+            b.line("case \"\(prop.name)\":")
+            b.indented {
+                b.line("guard let v = \(cast) else { return .error(\"type mismatch: \(prop.name) expects \(typeName)\") }")
+                b.line("\(prop.name) = v")
+                b.line("return .value(nil)")
+            }
 
         case .optionalPrimitive(let typeName):
             let cast = castExpression(for: typeName, from: "value")
-            cases.append("""
-                        case "\(prop.name)":
-                            if value == nil || value is NSNull { \(prop.name) = nil; return .value(nil) }
-                            guard let v = \(cast) else { return .error("type mismatch: \(prop.name) expects \(typeName)?") }
-                            \(prop.name) = v
-                            return .value(nil)
-            """)
+            b.line("case \"\(prop.name)\":")
+            b.indented {
+                b.line("if value == nil || value is NSNull { \(prop.name) = nil; return .value(nil) }")
+                b.line("guard let v = \(cast) else { return .error(\"type mismatch: \(prop.name) expects \(typeName)?\") }")
+                b.line("\(prop.name) = v")
+                b.line("return .value(nil)")
+            }
 
         case .array:
-            cases.append("""
-                        case "\(prop.name)":
-                            guard let tail else { return .error("cannot replace \(prop.name) array directly") }
-                            let (indexStr, rest) = TapPath.split(tail)
-                            guard let index = Int(indexStr), index >= 0, index < \(prop.name).count else {
-                                return .error("index out of bounds: \\(indexStr)")
-                            }
-                            guard let rest else { return .error("cannot replace array element directly") }
-                            return (\(prop.name)[index] as? TapDispatchable)?.__tapSet(rest, value: value) ?? .error("not dispatchable: \(prop.name)[]")
-            """)
+            b.line("case \"\(prop.name)\":")
+            b.indented {
+                b.line("guard let tail else { return .error(\"cannot replace \(prop.name) array directly\") }")
+                b.line("let (indexStr, rest) = TapPath.split(tail)")
+                b.line("guard let index = Int(indexStr), index >= 0, index < \(prop.name).count else {")
+                b.indented {
+                    b.line("return .error(\"index out of bounds: \\(indexStr)\")")
+                }
+                b.line("}")
+                b.line("guard let rest else { return .error(\"cannot replace array element directly\") }")
+                b.line("return (\(prop.name)[index] as? TapDispatchable)?.__tapSet(rest, value: value) ?? .error(\"not dispatchable: \(prop.name)[]\")")
+            }
 
         case .childState:
-            cases.append("""
-                        case "\(prop.name)":
-                            guard let tail else { return .error("cannot replace \(prop.name) object") }
-                            return (\(prop.name) as? TapDispatchable)?.__tapSet(tail, value: value) ?? .error("not dispatchable: \(prop.name)")
-            """)
+            b.line("case \"\(prop.name)\":")
+            b.indented {
+                b.line("guard let tail else { return .error(\"cannot replace \(prop.name) object\") }")
+                b.line("return (\(prop.name) as? TapDispatchable)?.__tapSet(tail, value: value) ?? .error(\"not dispatchable: \(prop.name)\")")
+            }
 
         case .unsupported:
             continue
         }
     }
 
-    return cases.joined(separator: "\n")
+    return b.build()
 }
 
 func generateAgentCall(methods: [MethodInfo]) -> String {
-    var cases: [String] = []
+    let b = CodeBuilder()
 
     for method in methods {
-        var lines: [String] = []
-        lines.append("            case \"\(method.name)\":")
+        b.line("case \"\(method.name)\":")
+        b.indented {
+            for param in method.params {
+                let varName = param.internalName
+                if primitiveTypes.contains(param.type) {
+                    let cast = castExpression(for: param.type, from: "params[\"\(param.jsonKey)\"]")
+                    b.line("guard let \(varName) = \(cast) else { return .error(\"missing param: \(param.jsonKey) (\(param.type))\") }")
+                } else {
+                    b.line("guard let \(varName)Raw = params[\"\(param.jsonKey)\"], let \(varName): \(param.type) = __tapDecode(\(varName)Raw) else { return .error(\"cannot decode param: \(param.jsonKey) (\(param.type))\") }")
+                }
+            }
 
-        // Generate param extraction — use internalName for local variables, jsonKey for dict keys
-        for param in method.params {
-            let varName = param.internalName
-            if primitiveTypes.contains(param.type) {
-                let cast = castExpression(for: param.type, from: "params[\"\(param.jsonKey)\"]")
-                lines.append("                guard let \(varName) = \(cast) else { return .error(\"missing param: \(param.jsonKey) (\(param.type))\") }")
+            let args = method.params.map { param in
+                if param.label == "_" {
+                    return param.internalName
+                }
+                return "\(param.label): \(param.internalName)"
+            }.joined(separator: ", ")
+
+            if let returnType = method.returnType {
+                b.line("let result = \(method.name)(\(args))")
+                if isPrimitiveOrDict(returnType) {
+                    b.line("return .value(result)")
+                } else {
+                    b.line("return .value(__tapEncode(result))")
+                }
             } else {
-                // Codable param — use __tapDecode
-                lines.append("                guard let \(varName)Raw = params[\"\(param.jsonKey)\"], let \(varName): \(param.type) = __tapDecode(\(varName)Raw) else { return .error(\"cannot decode param: \(param.jsonKey) (\(param.type))\") }")
+                b.line("\(method.name)(\(args))")
+                b.line("return .value(nil)")
             }
         }
-
-        // Generate call — use label: internalName at call site, or just internalName for "_" labels
-        let args = method.params.map { param in
-            if param.label == "_" {
-                return param.internalName
-            }
-            return "\(param.label): \(param.internalName)"
-        }.joined(separator: ", ")
-
-        if let returnType = method.returnType {
-            lines.append("                let result = \(method.name)(\(args))")
-            if isPrimitiveOrDict(returnType) {
-                lines.append("                return .value(result)")
-            } else {
-                // Codable return — use __tapEncode
-                lines.append("                return .value(__tapEncode(result))")
-            }
-        } else {
-            lines.append("                \(method.name)(\(args))")
-            lines.append("                return .value(nil)")
-        }
-
-        cases.append(lines.joined(separator: "\n"))
     }
 
-    return cases.joined(separator: "\n")
+    return b.build()
 }
 
 func generateAgentSnapshot(properties: [PropertyInfo]) -> String {
-    var entries: [String] = []
+    let b = CodeBuilder()
 
     for prop in properties {
         switch prop.category {
         case .primitive, .optionalPrimitive:
-            entries.append("                \"\(prop.name)\": \(prop.name) as Any,")
-
+            b.line("\"\(prop.name)\": \(prop.name) as Any,")
         case .array(let elementType):
             if primitiveTypes.contains(elementType) {
-                entries.append("                \"\(prop.name)\": \(prop.name),")
+                b.line("\"\(prop.name)\": \(prop.name),")
             } else {
-                entries.append("                \"\(prop.name)\": \(prop.name).compactMap { ($0 as? TapDispatchable)?.__tapSnapshot() },")
+                b.line("\"\(prop.name)\": \(prop.name).compactMap { ($0 as? TapDispatchable)?.__tapSnapshot() },")
             }
-
         case .childState:
-            entries.append("                \"\(prop.name)\": (\(prop.name) as? TapDispatchable)?.__tapSnapshot() as Any,")
-
+            b.line("\"\(prop.name)\": (\(prop.name) as? TapDispatchable)?.__tapSnapshot() as Any,")
         case .unsupported:
             continue
         }
     }
 
-    return entries.joined(separator: "\n")
+    return b.build()
 }
 
 func isPrimitiveOrDict(_ typeStr: String) -> Bool {
