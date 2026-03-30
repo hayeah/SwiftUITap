@@ -79,7 +79,10 @@ enum PropertyCategory {
 
 struct MethodInfo {
     let name: String
-    let params: [(label: String, type: String)]
+    // label: argument label at call site ("_" for unlabeled)
+    // internalName: parameter name used in function body
+    // jsonKey: key used in JSON params dict (internalName for "_" params, label otherwise)
+    let params: [(label: String, internalName: String, jsonKey: String, type: String)]
     let returnType: String? // nil = Void
 }
 
@@ -179,15 +182,35 @@ func extractMethods(from declaration: some DeclGroupSyntax) -> [MethodInfo] {
         // Skip init/deinit (init won't appear as FunctionDeclSyntax, but just in case)
         if name == "init" || name == "deinit" { continue }
 
-        // Extract params — all must have labels
-        var params: [(label: String, type: String)] = []
+        // Extract params — support all label forms:
+        //   func foo(label: Type)           → label="label", internalName="label"
+        //   func foo(label name: Type)      → label="label", internalName="name"
+        //   func foo(_ name: Type)          → label="_",     internalName="name"
+        var params: [(label: String, internalName: String, jsonKey: String, type: String)] = []
         var allSupported = true
 
         for param in funcDecl.signature.parameterClause.parameters {
-            let label = param.firstName.text
-            if label == "_" {
+            let firstName = param.firstName.text
+            let secondName = param.secondName?.text
+
+            let label: String
+            let internalName: String
+            let jsonKey: String
+
+            if firstName == "_" {
+                // func foo(_ name: Type) — unlabeled param, skip method
                 allSupported = false
                 break
+            } else if let second = secondName {
+                // func foo(label name: Type) — different label and param name
+                label = firstName
+                internalName = second
+                jsonKey = firstName
+            } else {
+                // func foo(label: Type) — label is also param name
+                label = firstName
+                internalName = firstName
+                jsonKey = firstName
             }
 
             guard let typeStr = paramTypeString(param.type) else {
@@ -195,7 +218,7 @@ func extractMethods(from declaration: some DeclGroupSyntax) -> [MethodInfo] {
                 break
             }
 
-            params.append((label: label, type: typeStr))
+            params.append((label: label, internalName: internalName, jsonKey: jsonKey, type: typeStr))
         }
 
         if !allSupported { continue }
@@ -332,19 +355,26 @@ func generateAgentCall(methods: [MethodInfo]) -> String {
         var lines: [String] = []
         lines.append("            case \"\(method.name)\":")
 
-        // Generate param extraction
+        // Generate param extraction — use internalName for local variables, jsonKey for dict keys
         for param in method.params {
+            let varName = param.internalName
             if primitiveTypes.contains(param.type) {
-                let cast = castExpression(for: param.type, from: "params[\"\(param.label)\"]")
-                lines.append("                guard let \(param.label) = \(cast) else { return .error(\"missing param: \(param.label) (\(param.type))\") }")
+                let cast = castExpression(for: param.type, from: "params[\"\(param.jsonKey)\"]")
+                lines.append("                guard let \(varName) = \(cast) else { return .error(\"missing param: \(param.jsonKey) (\(param.type))\") }")
             } else {
                 // Codable param — use __tapDecode
-                lines.append("                guard let \(param.label)Raw = params[\"\(param.label)\"], let \(param.label): \(param.type) = __tapDecode(\(param.label)Raw) else { return .error(\"cannot decode param: \(param.label) (\(param.type))\") }")
+                lines.append("                guard let \(varName)Raw = params[\"\(param.jsonKey)\"], let \(varName): \(param.type) = __tapDecode(\(varName)Raw) else { return .error(\"cannot decode param: \(param.jsonKey) (\(param.type))\") }")
             }
         }
 
-        // Generate call
-        let args = method.params.map { "\($0.label): \($0.label)" }.joined(separator: ", ")
+        // Generate call — use label: internalName at call site, or just internalName for "_" labels
+        let args = method.params.map { param in
+            if param.label == "_" {
+                return param.internalName
+            }
+            return "\(param.label): \(param.internalName)"
+        }.joined(separator: ", ")
+
         if let returnType = method.returnType {
             lines.append("                let result = \(method.name)(\(args))")
             if isPrimitiveOrDict(returnType) {
