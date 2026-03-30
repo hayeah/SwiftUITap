@@ -3,7 +3,7 @@
 NS_ASSUME_NONNULL_BEGIN
 
 /// Bridges JSON params to typed @objc method arguments via NSInvocation.
-@interface AgentDispatch : NSObject
+@interface TapDispatch : NSObject
 
 /// Call a method on target by name, passing params extracted from a JSON dictionary.
 /// Returns the method's return value (if it returns an object), or nil.
@@ -19,6 +19,13 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// List all @objc method names callable on the given class (excluding NSObject methods).
 + (NSArray<NSString *> *)callableMethodNames:(Class)cls;
+
+/// List property names from the ObjC runtime for the given class (own properties only).
++ (NSArray<NSString *> *)propertyNamesForClass:(Class)cls;
+
+/// Execute a block, catching any ObjC exception and converting it to an NSError.
+/// Returns YES on success, NO if an exception was caught.
++ (BOOL)tryCatch:(void (NS_NOESCAPE ^)(void))tryBlock error:(NSError *_Nullable *_Nullable)error;
 
 @end
 

@@ -28,8 +28,13 @@ let package = Package(
             path: "Sources/SwiftUITapMacros"
         ),
         .target(
+            name: "TapDispatchObjC",
+            path: "Sources/TapDispatchObjC",
+            publicHeadersPath: "include"
+        ),
+        .target(
             name: "SwiftUITap",
-            dependencies: ["SwiftUITapMacros"],
+            dependencies: ["SwiftUITapMacros", "TapDispatchObjC"],
             path: "Sources/SwiftUITap"
         ),
         .testTarget(

@@ -213,7 +213,17 @@ async function cmdStateGet(args: string[]) {
   const path = args[0] || ".";
   const raw = args.includes("--raw") || args.includes("-r");
 
-  const result = await requestState({ type: "get", path });
+  // Parse --depth N
+  let depth: number | undefined;
+  const depthIdx = args.indexOf("--depth");
+  if (depthIdx >= 0 && args[depthIdx + 1]) {
+    depth = parseInt(args[depthIdx + 1], 10);
+  }
+
+  const payload: any = { type: "get", path };
+  if (depth !== undefined) payload.depth = depth;
+
+  const result = await requestState(payload);
   if (result.error) {
     console.error("Error:", result.error);
     process.exit(1);

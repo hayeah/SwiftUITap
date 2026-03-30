@@ -1,13 +1,13 @@
-#import "AgentDispatch.h"
+#import "TapDispatch.h"
 #import <objc/runtime.h>
 
-@implementation AgentDispatch
+@implementation TapDispatch
 
 + (nullable id)call:(id)target method:(NSString *)name params:(NSDictionary *)params error:(NSError **)error {
     NSValue *selValue = [self findSelector:name onClass:[target class]];
     if (!selValue) {
         if (error) {
-            *error = [NSError errorWithDomain:@"AgentDispatch"
+            *error = [NSError errorWithDomain:@"TapDispatch"
                                          code:1
                                      userInfo:@{NSLocalizedDescriptionKey:
                                                     [NSString stringWithFormat:@"unknown method: %@", name]}];
@@ -19,7 +19,7 @@
     NSMethodSignature *sig = [target methodSignatureForSelector:sel];
     if (!sig) {
         if (error) {
-            *error = [NSError errorWithDomain:@"AgentDispatch"
+            *error = [NSError errorWithDomain:@"TapDispatch"
                                          code:2
                                      userInfo:@{NSLocalizedDescriptionKey:
                                                     [NSString stringWithFormat:@"no method signature for: %@", name]}];
@@ -80,7 +80,7 @@
             }
             default: {
                 if (error) {
-                    *error = [NSError errorWithDomain:@"AgentDispatch"
+                    *error = [NSError errorWithDomain:@"TapDispatch"
                                                  code:3
                                              userInfo:@{NSLocalizedDescriptionKey:
                                                             [NSString stringWithFormat:@"unsupported arg type '%s' for param '%@'", type, key]}];
@@ -172,45 +172,51 @@
 }
 
 + (nullable NSValue *)findSelector:(NSString *)name onClass:(Class)cls {
-    unsigned int methodCount = 0;
-    Method *methods = class_copyMethodList(cls, &methodCount);
+    // Walk the class hierarchy up to (but not including) NSObject
+    Class current = cls;
+    while (current && current != [NSObject class]) {
+        unsigned int methodCount = 0;
+        Method *methods = class_copyMethodList(current, &methodCount);
 
-    SEL bestMatch = NULL;
+        SEL bestMatch = NULL;
 
-    for (unsigned int i = 0; i < methodCount; i++) {
-        SEL sel = method_getName(methods[i]);
-        NSString *selStr = NSStringFromSelector(sel);
+        for (unsigned int i = 0; i < methodCount; i++) {
+            SEL sel = method_getName(methods[i]);
+            NSString *selStr = NSStringFromSelector(sel);
 
-        // Exact match: "methodName" or "methodName:"
-        if ([selStr isEqualToString:name] || [selStr isEqualToString:[name stringByAppendingString:@":"]]) {
-            bestMatch = sel;
-            break;
-        }
+            // Exact match: "methodName" or "methodName:"
+            if ([selStr isEqualToString:name] || [selStr isEqualToString:[name stringByAppendingString:@":"]]) {
+                bestMatch = sel;
+                break;
+            }
 
-        // Match base name before "With" — e.g. "addTodoWithTitle:" matches "addTodo"
-        NSString *baseName = selStr;
-        NSRange withRange = [selStr rangeOfString:@"With"];
-        if (withRange.location != NSNotFound) {
-            baseName = [selStr substringToIndex:withRange.location];
-        } else {
-            // Also try base name before first ":"
-            NSRange colonRange = [selStr rangeOfString:@":"];
-            if (colonRange.location != NSNotFound) {
-                baseName = [selStr substringToIndex:colonRange.location];
+            // Match base name before "With" — e.g. "addTodoWithTitle:" matches "addTodo"
+            NSString *baseName = selStr;
+            NSRange withRange = [selStr rangeOfString:@"With"];
+            if (withRange.location != NSNotFound) {
+                baseName = [selStr substringToIndex:withRange.location];
+            } else {
+                NSRange colonRange = [selStr rangeOfString:@":"];
+                if (colonRange.location != NSNotFound) {
+                    baseName = [selStr substringToIndex:colonRange.location];
+                }
+            }
+
+            if ([baseName isEqualToString:name]) {
+                bestMatch = sel;
+                break;
             }
         }
 
-        if ([baseName isEqualToString:name]) {
-            bestMatch = sel;
-            break;
+        free(methods);
+
+        if (bestMatch) {
+            return [NSValue valueWithPointer:bestMatch];
         }
+
+        current = class_getSuperclass(current);
     }
 
-    free(methods);
-
-    if (bestMatch) {
-        return [NSValue valueWithPointer:bestMatch];
-    }
     return nil;
 }
 
@@ -254,6 +260,33 @@
 
     free(methods);
     return names;
+}
+
++ (NSArray<NSString *> *)propertyNamesForClass:(Class)cls {
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    unsigned int count = 0;
+    objc_property_t *props = class_copyPropertyList(cls, &count);
+    if (props) {
+        for (unsigned int i = 0; i < count; i++) {
+            [names addObject:@(property_getName(props[i]))];
+        }
+        free(props);
+    }
+    return names;
+}
+
++ (BOOL)tryCatch:(void (NS_NOESCAPE ^)(void))tryBlock error:(NSError **)error {
+    @try {
+        tryBlock();
+        return YES;
+    } @catch (NSException *exception) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"TapDispatch"
+                                         code:100
+                                     userInfo:@{NSLocalizedDescriptionKey: exception.reason ?: @"ObjC exception"}];
+        }
+        return NO;
+    }
 }
 
 @end

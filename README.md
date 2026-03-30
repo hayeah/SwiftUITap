@@ -167,11 +167,10 @@ swiftui-tap state set darkMode true
 # Unquoted strings work too (bare words that aren't valid JSON become strings)
 swiftui-tap state set label hello
 
-# Call a method
+# Call a method (params are a JSON object, optional for no-arg methods)
 swiftui-tap state call addTodo '{"title": "Buy milk"}'
-
-# Call with multiple params
 swiftui-tap state call openBook '{"bookID": "abc", "chapter": 0}'
+swiftui-tap state call reset
 ```
 
 ### View inspection
@@ -220,6 +219,55 @@ Each node shows:
 - `rel` — position relative to parent (shows padding/spacing)
 - `proposed` — what the parent offered in the layout negotiation
 - `reported` — what the view claimed to need
+
+### System objects (dot-prefix builtins)
+
+Dot-prefixed paths access system objects directly via KVC and ObjC runtime — no `@SwiftUITap` macro needed.
+
+```bash
+# Window properties and traversal
+swiftui-tap state get .windows.0.title
+swiftui-tap state get .windows.0.frame
+swiftui-tap state get .windows.0.screen.visibleFrame
+
+# Shallow snapshot (NSObject children shown as __ref__ stubs)
+swiftui-tap state get .windows.0
+
+# Deep snapshot (recurse into NSObject children)
+swiftui-tap state get .windows.0 --depth 3
+
+# Set via KVC
+swiftui-tap state set .windows.0.title '"New Title"'
+
+# Call ObjC methods
+swiftui-tap state call .windows.0.center
+swiftui-tap state call .windows.0.toggleFullScreen
+```
+
+Available builtins:
+
+| Path | macOS | iOS |
+|---|---|---|
+| `.app` | `NSApplication.shared` | `UIApplication.shared` |
+| `.windows` | `NSApplication.shared.windows` | active scene windows |
+| `.screens` / `.screen` | `NSScreen.screens` | `UIScreen.main` |
+| `.pasteboard` | `NSPasteboard.general` | `UIPasteboard.general` |
+| `.defaults` | `UserDefaults.standard` | `UserDefaults.standard` |
+| `.bundle` | `Bundle.main` | `Bundle.main` |
+| `.process` | `ProcessInfo.processInfo` | `ProcessInfo.processInfo` |
+| `.workspace` | `NSWorkspace.shared` | — |
+| `.device` | — | `UIDevice.current` |
+
+Non-primitive values are tagged with `__type__`:
+
+```json
+{
+  "frame": {"__type__": "CGRect", "__value__": [[100, 200], [800, 600]]},
+  "screen": {"__type__": "NSScreen", "__ref__": "0x600001234568"},
+  "title": "My App",
+  "isVisible": true
+}
+```
 
 ### Environment variable
 
@@ -525,20 +573,26 @@ SwiftUITap/
 │   │   ├── SwiftUITap.swift         # Public API: poll(state:server:)
 │   │   ├── TapDispatchable.swift      # Protocol, TapResult, @SwiftUITap macro decl
 │   │   ├── TapPath.swift              # Dot-path splitting
-│   │   ├── Poller.swift                 # URLSession long-poll loop
-│   │   ├── Dispatcher.swift             # Routes get/set/call
-│   │   ├── TapID.swift                  # .tapID() view modifier
-│   │   ├── TapInspectable.swift         # .tapInspectable() root modifier
+│   │   ├── Poller.swift               # URLSession long-poll loop
+│   │   ├── Dispatcher.swift           # Routes get/set/call
+│   │   ├── TapDynamic.swift           # KVC/ObjC runtime dispatch for NSObjects
+│   │   ├── TapCoerce.swift            # JSON ↔ native coercion (__type__ tagging)
+│   │   ├── TapBuiltins.swift          # Dot-prefix routing (.windows, .app, etc.)
+│   │   ├── TapID.swift                # .tapID() view modifier
+│   │   ├── TapInspectable.swift       # .tapInspectable() root modifier
 │   │   ├── TapViewStore.swift         # View tree + screenshot dispatch
 │   │   └── TapViewFrameKey.swift      # PreferenceKey for anchor frames
+│   ├── TapDispatchObjC/
+│   │   ├── TapDispatch.m             # ObjC runtime: NSInvocation, @try/@catch, KVC
+│   │   └── include/TapDispatch.h
 │   └── SwiftUITapMacros/
-│       ├── SwiftUITapMacro.swift          # ExtensionMacro (SwiftSyntax)
-│       └── Plugin.swift                 # CompilerPlugin entry point
+│       ├── SwiftUITapMacro.swift      # ExtensionMacro (SwiftSyntax)
+│       └── Plugin.swift               # CompilerPlugin entry point
 ├── server/
-│   ├── index.ts                         # Bun HTTP relay server
-│   ├── cli.ts                           # swiftui-tap CLI
+│   ├── index.ts                       # Bun HTTP relay server
+│   ├── cli.ts                         # swiftui-tap CLI
 │   └── package.json
 └── Examples/
-    ├── TodoList/                        # macOS example app
-    └── TodoListiOS/                     # iOS example app
+    ├── TodoList/                      # macOS example app
+    └── TodoListiOS/                   # iOS example app
 ```

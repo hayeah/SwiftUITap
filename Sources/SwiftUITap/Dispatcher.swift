@@ -41,7 +41,7 @@ struct Dispatcher {
         }
     }
 
-    /// Route dot-prefixed paths to built-in system dispatchers.
+    /// Route dot-prefixed paths to built-in system objects via dynamic dispatch.
     @MainActor
     private func dispatchBuiltin(_ request: [String: Any]) -> TapResult? {
         let type = request["type"] as? String ?? ""
@@ -51,12 +51,22 @@ struct Dispatcher {
 
         guard let path, path.hasPrefix(".") else { return nil }
 
-        #if canImport(AppKit) && !targetEnvironment(macCatalyst)
-        if path.hasPrefix(".windows") {
-            return TapWindowStore.dispatch(request)
+        guard let (obj, tail) = TapBuiltins.resolve(path) else {
+            return .error("unknown system path: \(path)")
         }
-        #endif
 
-        return .error("unknown system path: \(path)")
+        let depth = request["depth"] as? Int ?? 0
+
+        switch type {
+        case "get":
+            return TapDynamic.get(obj, key: tail ?? "", depth: depth)
+        case "set":
+            return TapDynamic.set(obj, key: tail ?? "", value: request["value"])
+        case "call":
+            let params = request["params"] as? [String: Any] ?? [:]
+            return TapDynamic.call(obj, method: tail ?? "", params: params)
+        default:
+            return .error("unknown type: \(type)")
+        }
     }
 }
