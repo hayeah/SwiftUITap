@@ -97,19 +97,19 @@ enum TapCoerce {
         return String(format: "%p", Int(bitPattern: ptr))
     }
 
-    static func snapshotObject(_ obj: NSObject, depth: Int, maxDepth: Int, visited: inout [ObjectIdentifier: String]) -> [String: Any] {
+    static func snapshotObject(_ obj: NSObject, depth: Int, maxDepth: Int, visited: inout [ObjectIdentifier: String]) -> Any {
         let oid = ObjectIdentifier(obj)
         let addr = ptrID(obj)
         let cls = String(describing: type(of: obj))
 
-        // Cycle detection
+        // Cycle detection (deep mode only)
         if visited[oid] != nil {
-            return ["__type__": cls, "__ref__": addr]
+            return ["__type__": cls, "__ref__": addr] as [String: Any]
         }
 
-        // Depth limit: shallow means NSObject children become refs
+        // Depth limit: NSObject children become .description strings
         if depth > maxDepth {
-            return ["__type__": cls, "__ref__": addr]
+            return obj.description
         }
 
         visited[oid] = addr
