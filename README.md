@@ -195,6 +195,30 @@ swiftui-tap view screenshot ContentView.todoList -o todolist.png
 swiftui-tap view screenshot -f jpg -q 0.8 -o screen.jpg
 ```
 
+### Touch synthesis (iOS only)
+
+Inject real UIKit touches via KIF's in-process touch synthesis. Works on both simulator and real devices — no XCUITest or simulator-specific APIs needed. Coordinates are screen points.
+
+```bash
+# Tap at screen coordinates
+swiftui-tap kif.tap 200 400
+
+# Swipe from point to point (default duration 0.3s)
+swiftui-tap kif.swipe 200 600 200 200
+swiftui-tap kif.swipe 200 600 200 200 0.5
+
+# Long press (default duration 1.0s)
+swiftui-tap kif.longpress 200 400
+swiftui-tap kif.longpress 200 400 2.0
+
+# Type text (a text field must be focused first)
+swiftui-tap kif.type hello world
+```
+
+Use `view tree` to find coordinates — the frame values in tree output are screen points that map directly to kif command arguments.
+
+**Known limitation:** taps on SwiftUI buttons inside `List` (UICollectionView) don't register on iOS 26. Use `state call` for list item interactions; `kif.tap` works for buttons, text fields, and other views outside of List.
+
 ### Example tree output
 
 ```
@@ -289,6 +313,12 @@ curl localhost:9876/request -d '{"type":"call","method":"addTodo","params":{"tit
 # View: tree/screenshot via POST /view
 curl localhost:9876/view -d '{"type":"tree"}'
 curl localhost:9876/view -d '{"type":"screenshot","id":"ContentView.todoList"}' | jq -r .data.image | base64 -d > todo.png
+
+# KIF touch (iOS only) — dispatched as .kif.* calls
+curl localhost:9876/request -d '{"type":"call","method":".kif.tap","params":{"x":200,"y":400}}'
+curl localhost:9876/request -d '{"type":"call","method":".kif.swipe","params":{"x1":200,"y1":600,"x2":200,"y2":200,"duration":0.3}}'
+curl localhost:9876/request -d '{"type":"call","method":".kif.longpress","params":{"x":200,"y":400,"duration":1.0}}'
+curl localhost:9876/request -d '{"type":"call","method":".kif.type","params":{"text":"hello"}}'
 ```
 
 ## Coding Convention
@@ -578,6 +608,7 @@ SwiftUITap/
 │   │   ├── TapDynamic.swift           # KVC/ObjC runtime dispatch for NSObjects
 │   │   ├── TapCoerce.swift            # JSON ↔ native coercion (__type__ tagging)
 │   │   ├── TapBuiltins.swift          # Dot-prefix routing (.windows, .app, etc.)
+│   │   ├── TapKIF.swift                # .kif.* command dispatch (iOS)
 │   │   ├── TapID.swift                # .tapID() view modifier
 │   │   ├── TapInspectable.swift       # .tapInspectable() root modifier
 │   │   ├── TapViewStore.swift         # View tree + screenshot dispatch
@@ -585,6 +616,12 @@ SwiftUITap/
 │   ├── TapDispatchObjC/
 │   │   ├── TapDispatch.m             # ObjC runtime: NSInvocation, @try/@catch, KVC
 │   │   └── include/TapDispatch.h
+│   ├── KIFTouch/                      # KIF touch synthesis (iOS only)
+│   │   ├── UITouch-KIFAdditions.m     # UITouch private API wrappers
+│   │   ├── UIEvent+KIFAdditions.m     # IOHIDEvent attachment to UIEvent
+│   │   ├── IOHIDEvent+KIF.m           # IOHIDDigitizerEvent construction
+│   │   ├── KIFTouchActions.m          # High-level tap/swipe/longpress
+│   │   └── KIFTypist.m               # Text input via UIKeyboardImpl
 │   └── SwiftUITapMacros/
 │       ├── SwiftUITapMacro.swift      # ExtensionMacro (SwiftSyntax)
 │       └── Plugin.swift               # CompilerPlugin entry point
