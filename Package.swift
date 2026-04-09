@@ -33,8 +33,20 @@ let package = Package(
             publicHeadersPath: "include"
         ),
         .target(
+            name: "KIFTouch",
+            path: "Sources/KIFTouch",
+            publicHeadersPath: "include",
+            linkerSettings: [
+                .linkedFramework("IOKit"),
+            ]
+        ),
+        .target(
             name: "SwiftUITap",
-            dependencies: ["SwiftUITapMacros", "TapDispatchObjC"],
+            dependencies: [
+                "SwiftUITapMacros",
+                "TapDispatchObjC",
+                .target(name: "KIFTouch", condition: .when(platforms: [.iOS])),
+            ],
             path: "Sources/SwiftUITap"
         ),
         .testTarget(

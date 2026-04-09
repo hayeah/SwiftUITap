@@ -6,6 +6,13 @@ struct Dispatcher {
 
     @MainActor
     func dispatch(_ request: [String: Any]) -> TapResult {
+        // Intercept .kif.* commands for touch synthesis
+        #if canImport(UIKit) && !targetEnvironment(macCatalyst)
+        if let result = dispatchKIF(request) {
+            return result
+        }
+        #endif
+
         // Intercept dot-prefixed paths for built-in system objects
         if let result = dispatchBuiltin(request) {
             return result
@@ -40,6 +47,22 @@ struct Dispatcher {
             return .error("unknown type: \(type)")
         }
     }
+
+    /// Route .kif.* commands to KIF touch synthesis.
+    #if canImport(UIKit) && !targetEnvironment(macCatalyst)
+    @MainActor
+    private func dispatchKIF(_ request: [String: Any]) -> TapResult? {
+        let type = request["type"] as? String ?? ""
+        guard type == "call" else { return nil }
+
+        let method = request["method"] as? String ?? ""
+        guard method.hasPrefix(".kif.") else { return nil }
+
+        let command = String(method.dropFirst(".kif.".count))
+        let params = request["params"] as? [String: Any] ?? [:]
+        return TapKIF.dispatch(command, params: params)
+    }
+    #endif
 
     /// Route dot-prefixed paths to built-in system objects via dynamic dispatch.
     @MainActor
