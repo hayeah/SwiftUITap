@@ -107,7 +107,6 @@ typedef struct {
 - (UIView *)kif_getHitTestViewInWindow:(UIWindow *)window atPoint:(CGPoint)point
 {
     UIView *hitTestView = [window hitTest:point withEvent:nil];
-    NSLog(@"[KIFTouch] kif_getHitTestView: standard hitTest -> %@ (%@)", hitTestView, NSStringFromClass([hitTestView class]));
 
     if (@available(iOS 18.0, *)) {
         static Class UIHitTestContextClass;
@@ -121,12 +120,10 @@ typedef struct {
             contextWithPointAndRadiusSel = NSSelectorFromString(@"contextWithPoint:radius:");
             canCreateContext = UIHitTestContextClass && [UIHitTestContextClass respondsToSelector:contextWithPointAndRadiusSel];
             canHitTestWithContext = [[UIView class] instancesRespondToSelector:@selector(_hitTestWithContext:)];
-            NSLog(@"[KIFTouch] iOS 18 hit test: contextClass=%@, canCreate=%d, canHitTest=%d", UIHitTestContextClass, canCreateContext, canHitTestWithContext);
         });
 
         if (canCreateContext && canHitTestWithContext) {
             id hitTestContext = ((id (*)(id, SEL, CGPoint, CGFloat))objc_msgSend)(UIHitTestContextClass, contextWithPointAndRadiusSel, point, 0);
-            NSLog(@"[KIFTouch] hitTestContext: %@", hitTestContext);
 
             if (hitTestContext) {
                 id foundResponder = NULL;
@@ -134,12 +131,10 @@ typedef struct {
 
                 while (foundResponder == NULL && currentView != NULL) {
                     foundResponder = [currentView _hitTestWithContext:hitTestContext];
-                    NSLog(@"[KIFTouch] _hitTestWithContext on %@ -> %@", NSStringFromClass([currentView class]), foundResponder);
                     currentView = [currentView superview];
                 }
 
                 if (foundResponder) {
-                    NSLog(@"[KIFTouch] iOS 18 context found: %@ (%@)", foundResponder, NSStringFromClass([foundResponder class]));
                     return foundResponder;
                 }
             }

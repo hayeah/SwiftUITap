@@ -4,7 +4,6 @@
 #import "KIFTouchActions.h"
 #import "UITouch-KIFAdditions.h"
 #import "UIEvent+KIFAdditions.h"
-#import <objc/message.h>
 
 #define DRAG_TOUCH_DELAY 0.01
 
@@ -41,17 +40,7 @@
 
 + (void)tapAtPoint:(CGPoint)point inWindow:(UIWindow *)window
 {
-    NSLog(@"[KIFTouch] tapAtPoint: (%.1f, %.1f)", point.x, point.y);
-
-    // Find the deepest interactive subview at this point using recursive hit testing.
-    // Standard [window hitTest:] may return a scroll view container rather than its content.
-    UIView *deepView = [self deepestInteractiveViewAtPoint:point inView:window];
-    NSLog(@"[KIFTouch] deepestView = %@ (%@)", deepView, NSStringFromClass([deepView class]));
-
-    // Create touch on the deepest view
-    CGPoint viewPoint = [deepView convertPoint:point fromView:window];
-    UITouch *touch = [[UITouch alloc] initAtPoint:viewPoint inView:deepView];
-    NSLog(@"[KIFTouch] touch.view = %@ (%@)", touch.view, NSStringFromClass([touch.view class]));
+    UITouch *touch = [[UITouch alloc] initAtPoint:point inWindow:window];
 
     [touch setPhaseAndUpdateTimestamp:UITouchPhaseBegan];
     UIEvent *event = [self eventWithTouch:touch];
@@ -64,31 +53,6 @@
     [self sendEvent:endedEvent];
 
     CFRunLoopRunInMode(kCFRunLoopDefaultMode, DRAG_TOUCH_DELAY, false);
-}
-
-/// Recursively find the deepest subview containing the point that either:
-/// - has gesture recognizers, or
-/// - is the leaf view
-/// This bypasses UIScrollView's hitTest which returns self instead of cell content.
-+ (UIView *)deepestInteractiveViewAtPoint:(CGPoint)windowPoint inView:(UIView *)view
-{
-    CGPoint localPoint = [view convertPoint:windowPoint fromView:view.window ?: view];
-    if (![view pointInside:localPoint withEvent:nil]) {
-        return nil;
-    }
-
-    // Search subviews in reverse (front to back)
-    for (UIView *subview in [view.subviews reverseObjectEnumerator]) {
-        if (subview.hidden || subview.alpha < 0.01 || !subview.userInteractionEnabled) {
-            continue;
-        }
-        UIView *found = [self deepestInteractiveViewAtPoint:windowPoint inView:subview];
-        if (found) {
-            return found;
-        }
-    }
-
-    return view;
 }
 
 #pragma mark - Long Press
