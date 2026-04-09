@@ -281,6 +281,59 @@ async function cmdStateCall(args: string[]) {
   }
 }
 
+// --- KIF touch commands ---
+
+async function cmdKIFTap(args: string[]) {
+  const x = parseFloat(args[0]);
+  const y = parseFloat(args[1]);
+  if (isNaN(x) || isNaN(y)) {
+    console.error("Usage: swiftui-tap kif.tap <x> <y>");
+    process.exit(1);
+  }
+  const result = await requestState({ type: "call", method: ".kif.tap", params: { x, y } });
+  if (result.error) { console.error("Error:", result.error); process.exit(1); }
+  console.log("OK tap", x, y);
+}
+
+async function cmdKIFSwipe(args: string[]) {
+  const x1 = parseFloat(args[0]);
+  const y1 = parseFloat(args[1]);
+  const x2 = parseFloat(args[2]);
+  const y2 = parseFloat(args[3]);
+  const duration = args[4] ? parseFloat(args[4]) : 0.3;
+  if (isNaN(x1) || isNaN(y1) || isNaN(x2) || isNaN(y2)) {
+    console.error("Usage: swiftui-tap kif.swipe <x1> <y1> <x2> <y2> [duration]");
+    process.exit(1);
+  }
+  const result = await requestState({ type: "call", method: ".kif.swipe", params: { x1, y1, x2, y2, duration } });
+  if (result.error) { console.error("Error:", result.error); process.exit(1); }
+  console.log("OK swipe", x1, y1, "->", x2, y2);
+}
+
+async function cmdKIFLongPress(args: string[]) {
+  const x = parseFloat(args[0]);
+  const y = parseFloat(args[1]);
+  const duration = args[2] ? parseFloat(args[2]) : 1.0;
+  if (isNaN(x) || isNaN(y)) {
+    console.error("Usage: swiftui-tap kif.longpress <x> <y> [duration]");
+    process.exit(1);
+  }
+  const result = await requestState({ type: "call", method: ".kif.longpress", params: { x, y, duration } });
+  if (result.error) { console.error("Error:", result.error); process.exit(1); }
+  console.log("OK longpress", x, y, "for", duration, "s");
+}
+
+async function cmdKIFType(args: string[]) {
+  const text = args.join(" ");
+  if (!text) {
+    console.error("Usage: swiftui-tap kif.type <text>");
+    process.exit(1);
+  }
+  const result = await requestState({ type: "call", method: ".kif.type", params: { text } });
+  if (result.error) { console.error("Error:", result.error); process.exit(1); }
+  console.log("OK typed", JSON.stringify(text));
+}
+
 // --- Main ---
 
 const args = process.argv.slice(2);
@@ -300,6 +353,14 @@ if (cmd === "server") {
   await cmdStateSet(rest);
 } else if (cmd === "state" && sub === "call") {
   await cmdStateCall(rest);
+} else if (cmd === "kif.tap") {
+  await cmdKIFTap(args.slice(1));
+} else if (cmd === "kif.swipe") {
+  await cmdKIFSwipe(args.slice(1));
+} else if (cmd === "kif.longpress") {
+  await cmdKIFLongPress(args.slice(1));
+} else if (cmd === "kif.type") {
+  await cmdKIFType(args.slice(1));
 } else {
   console.log(`swiftui-tap — CLI for SwiftUITap
 
@@ -310,6 +371,10 @@ Usage:
   swiftui-tap state get <path>
   swiftui-tap state set <path> <value>
   swiftui-tap state call <method> [key=value ...]
+  swiftui-tap kif.tap <x> <y>
+  swiftui-tap kif.swipe <x1> <y1> <x2> <y2> [duration]
+  swiftui-tap kif.longpress <x> <y> [duration]
+  swiftui-tap kif.type <text>
 
 Env: SWIFTUI_TAP_URL (default: http://localhost:9876)`);
 }

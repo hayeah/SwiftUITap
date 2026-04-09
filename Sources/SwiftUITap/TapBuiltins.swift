@@ -93,6 +93,7 @@ enum TapBuiltins {
         if path == ".device" || path.hasPrefix(".device.") {
             return resolveSimple(path, prefix: ".device", obj: UIDevice.current)
         }
+        // .kif.* commands are handled directly in Dispatcher, not via NSObject dispatch
         return nil
     }
     #endif
