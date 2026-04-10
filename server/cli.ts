@@ -12,6 +12,8 @@ import { DEVICE_UDID_HEADER } from "./RelayServer";
  *   swiftui-tap [--udid <udid>] state get <path>
  *   swiftui-tap [--udid <udid>] state set <path> <value>
  *   swiftui-tap [--udid <udid>] state call <method> [key=value ...]
+ *   swiftui-tap [--udid <udid>] eval [tag] <code>
+ *   swiftui-tap [--udid <udid>] eval [tag] --module <file.ts>
  *
  * Env: SWIFTUI_TAP_URL (default: http://localhost:9876)
  *      SWIFTUI_TAP_UDID (optional target device)
@@ -387,6 +389,99 @@ async function cmdKIFType(args: string[]) {
   console.log("OK typed", JSON.stringify(text));
 }
 
+// --- Eval commands ---
+
+async function cmdEval(args: string[]) {
+  let tag: string | undefined;
+  let code: string | undefined;
+  let moduleFile: string | undefined;
+
+  // Parse args: eval [tag] <code> OR eval [tag] --module <file.ts>
+  const moduleIdx = args.indexOf("--module");
+  if (moduleIdx >= 0) {
+    moduleFile = args[moduleIdx + 1];
+    if (!moduleFile) {
+      console.error("Usage: swiftui-tap eval [tag] --module <file.ts>");
+      process.exit(1);
+    }
+    // Everything before --module that isn't a flag is the tag
+    const preArgs = args.slice(0, moduleIdx).filter((a) => !a.startsWith("-"));
+    tag = preArgs[0];
+  } else {
+    // eval [tag] <code>
+    // If there's only one non-flag arg, it's the code (no tag)
+    // If there are two+, first is tag, rest is code
+    const nonFlagArgs: string[] = [];
+    for (const a of args) {
+      if (!a.startsWith("-")) nonFlagArgs.push(a);
+    }
+
+    if (nonFlagArgs.length === 0) {
+      console.error(
+        "Usage: swiftui-tap eval [tag] <code>\n       swiftui-tap eval [tag] --module <file.ts>"
+      );
+      process.exit(1);
+    } else if (nonFlagArgs.length === 1) {
+      code = nonFlagArgs[0];
+    } else {
+      tag = nonFlagArgs[0];
+      code = nonFlagArgs.slice(1).join(" ");
+    }
+  }
+
+  // If --module, bundle the file via bun build
+  if (moduleFile) {
+    code = await bundleModule(moduleFile);
+  }
+
+  if (!code) {
+    console.error("No code to evaluate");
+    process.exit(1);
+  }
+
+  const payload: any = { type: "eval", code };
+  if (tag) payload.tag = tag;
+
+  const result = await requestState(payload);
+  if (result.error) {
+    console.error("Error:", result.error);
+    process.exit(1);
+  }
+
+  if (result.data != null) {
+    console.log(JSON.stringify(result.data, null, 2));
+  } else {
+    console.log("null");
+  }
+}
+
+async function bundleModule(filePath: string): Promise<string> {
+  // Use bun build CLI with IIFE format so the bundle is eval-safe
+  const proc = Bun.spawn(
+    ["bun", "build", filePath, "--target", "browser", "--format", "iife", "--global-name", "__tap_module__"],
+    { stdout: "pipe", stderr: "pipe" }
+  );
+
+  const [stdout, stderr] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    console.error("Bundle failed:", stderr || stdout);
+    process.exit(1);
+  }
+
+  // The IIFE assigns to __tap_module__. Call its default export.
+  return `${stdout}
+;(async () => {
+  const mod = __tap_module__;
+  const def = mod.default || mod;
+  return typeof def === 'function' ? def() : def;
+})()`;
+}
+
 // --- Main ---
 
 const args = stripGlobalOptions(process.argv.slice(2));
@@ -406,6 +501,8 @@ if (cmd === "server") {
   await cmdStateSet(rest);
 } else if (cmd === "state" && sub === "call") {
   await cmdStateCall(rest);
+} else if (cmd === "eval") {
+  await cmdEval(args.slice(1));
 } else if (cmd === "kif.tap") {
   await cmdKIFTap(args.slice(1));
 } else if (cmd === "kif.swipe") {
@@ -424,6 +521,8 @@ Usage:
   swiftui-tap [--udid <udid>] state get <path>
   swiftui-tap [--udid <udid>] state set <path> <value>
   swiftui-tap [--udid <udid>] state call <method> [key=value ...]
+  swiftui-tap [--udid <udid>] eval [tag] <code>
+  swiftui-tap [--udid <udid>] eval [tag] --module <file.ts>
   swiftui-tap [--udid <udid>] kif.tap <x> <y>
   swiftui-tap [--udid <udid>] kif.swipe <x1> <y1> <x2> <y2> [duration]
   swiftui-tap [--udid <udid>] kif.longpress <x> <y> [duration]

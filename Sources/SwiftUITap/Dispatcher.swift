@@ -5,7 +5,7 @@ struct Dispatcher {
     let state: any TapDispatchable
 
     @MainActor
-    func dispatch(_ request: [String: Any]) -> TapResult {
+    func dispatch(_ request: [String: Any]) async -> TapResult {
         // Intercept .kif.* commands for touch synthesis
         #if canImport(UIKit) && !targetEnvironment(macCatalyst)
         if let result = dispatchKIF(request) {
@@ -42,6 +42,13 @@ struct Dispatcher {
             }
             let params = request["params"] as? [String: Any] ?? [:]
             return state.__tapCall(method, params: params)
+
+        case "eval":
+            guard let code = request["code"] as? String else {
+                return .error("missing 'code' for eval")
+            }
+            let tag = request["tag"] as? String
+            return await TapWebViewStore.shared.eval(tag: tag, code: code)
 
         default:
             return .error("unknown type: \(type)")

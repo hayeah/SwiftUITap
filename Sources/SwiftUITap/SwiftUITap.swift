@@ -1,4 +1,5 @@
 import Foundation
+import WebKit
 
 /// Main entry point for SwiftUITap.
 /// Call `SwiftUITap.poll(state:server:)` to start the long-poll loop.
@@ -32,6 +33,20 @@ public enum SwiftUITap {
     @MainActor
     public static var activeServerURLs: [String] {
         _activePollers.map { $0.serverURL.absoluteString }
+    }
+
+    // MARK: - WebView Registration
+
+    /// Register a WKWebView for agent-driven JS evaluation.
+    @MainActor
+    public static func registerWebView(_ webView: WKWebView, tag: String) {
+        TapWebViewStore.shared.register(webView, tag: tag)
+    }
+
+    /// Unregister a previously registered WKWebView.
+    @MainActor
+    public static func unregisterWebView(tag: String) {
+        TapWebViewStore.shared.unregister(tag: tag)
     }
 }
 

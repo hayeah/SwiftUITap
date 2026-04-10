@@ -73,7 +73,7 @@ final class Poller {
         if path == "/view", let viewStore = TapViewStore.active {
             result = viewStore.dispatch(request)
         } else {
-            result = dispatcher.dispatch(request)
+            result = await dispatcher.dispatch(request)
         }
 
         // Build response with internal request tracking ID
