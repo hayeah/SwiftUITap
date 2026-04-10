@@ -119,7 +119,16 @@ func extractProperties(from declaration: some DeclGroupSyntax) -> [PropertyInfo]
             // Check if computed (has accessor block with get but no initializer)
             let isComputed = binding.accessorBlock != nil && binding.initializer == nil
 
-            let isReadOnly = isLet || isComputed
+            // Computed properties with a setter are not read-only
+            let hasSetter: Bool = {
+                guard let accessorBlock = binding.accessorBlock else { return false }
+                if case .accessors(let accessorList) = accessorBlock.accessors {
+                    return accessorList.contains { $0.accessorSpecifier.text == "set" }
+                }
+                return false
+            }()
+
+            let isReadOnly = isLet || (isComputed && !hasSetter)
             let category = categorizeType(typeStr)
 
             results.append(PropertyInfo(

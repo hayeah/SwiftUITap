@@ -1,0 +1,20 @@
+name: TodoListiOS
+options:
+  bundleIdPrefix: com.swiftuitap.example
+  deploymentTarget:
+    iOS: "17.0"
+packages:
+  SwiftUITap:
+    path: ../../
+targets:
+  TodoListiOS:
+    type: application
+    platform: iOS
+    sources:
+      - TodoListiOS
+    dependencies:
+      - package: SwiftUITap
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.swiftuitap.example.TodoListiOS
+        GENERATE_INFOPLIST_FILE: YES
