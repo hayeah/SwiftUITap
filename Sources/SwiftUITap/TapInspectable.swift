@@ -79,7 +79,7 @@ struct PlatformViewBridge: UIViewRepresentable {
     func updateUIView(_ uiView: UIView, context: Context) {
         DispatchQueue.main.async {
             if let window = uiView.window {
-                let root = window.rootViewController?.view ?? window
+                let root = window
                 viewStore.rootView = root
                 // Capture the offset from rootView to SwiftUI content
                 let bridgeFrameInRoot = uiView.superview?.convert(uiView.frame, to: root) ?? uiView.frame

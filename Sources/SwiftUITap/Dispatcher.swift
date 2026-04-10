@@ -72,7 +72,7 @@ struct Dispatcher {
             ? request["method"] as? String
             : request["path"] as? String
 
-        guard let path, path.hasPrefix(".") else { return nil }
+        guard let path, path.hasPrefix("."), path != "." else { return nil }
 
         guard let (obj, tail) = TapBuiltins.resolve(path) else {
             return .error("unknown system path: \(path)")
