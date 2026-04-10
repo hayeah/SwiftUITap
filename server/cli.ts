@@ -1,20 +1,24 @@
 #!/usr/bin/env bun
 
+import { DEVICE_UDID_HEADER } from "./RelayServer";
+
 /**
  * swiftui-tap — CLI for SwiftUITap
  *
  * Usage:
- *   swiftui-tap server [--port 9876] [--debug]
- *   swiftui-tap view tree [id] [--json]
- *   swiftui-tap view screenshot [id] [-o file] [--format png|jpg] [--scale N]
- *   swiftui-tap state get <path>
- *   swiftui-tap state set <path> <value>
- *   swiftui-tap state call <method> [key=value ...]
+ *   swiftui-tap [--udid <udid>] server [--port 9876] [--debug]
+ *   swiftui-tap [--udid <udid>] view tree [id] [--json]
+ *   swiftui-tap [--udid <udid>] view screenshot [id] [-o file] [--format png|jpg] [--scale N]
+ *   swiftui-tap [--udid <udid>] state get <path>
+ *   swiftui-tap [--udid <udid>] state set <path> <value>
+ *   swiftui-tap [--udid <udid>] state call <method> [key=value ...]
  *
  * Env: SWIFTUI_TAP_URL (default: http://localhost:9876)
+ *      SWIFTUI_TAP_UDID (optional target device)
  */
 
 const BASE_URL = process.env.SWIFTUI_TAP_URL || "http://localhost:9876";
+const TARGET_UDID = parseTargetUDID(process.argv.slice(2));
 
 // --- HTTP helpers ---
 
@@ -24,7 +28,7 @@ async function postJSON(path: string, body: any, timeout = 30000): Promise<any> 
   try {
     const resp = await fetch(`${BASE_URL}${path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: buildHeaders(),
       body: JSON.stringify(body),
       signal: controller.signal,
     });
@@ -32,6 +36,55 @@ async function postJSON(path: string, body: any, timeout = 30000): Promise<any> 
   } finally {
     clearTimeout(timer);
   }
+}
+
+function buildHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  if (TARGET_UDID) {
+    headers[DEVICE_UDID_HEADER] = TARGET_UDID;
+  }
+
+  return headers;
+}
+
+function parseTargetUDID(argv: string[]): string | undefined {
+  const cliValue = readOption(argv, "--udid");
+  const envValue = process.env.SWIFTUI_TAP_UDID;
+  const target = cliValue ?? envValue;
+  return target?.trim() || undefined;
+}
+
+function readOption(argv: string[], flag: string): string | undefined {
+  const index = argv.indexOf(flag);
+  if (index < 0) {
+    return undefined;
+  }
+
+  const value = argv[index + 1];
+  if (!value || value.startsWith("-")) {
+    console.error(`Missing value for ${flag}`);
+    process.exit(1);
+  }
+
+  return value;
+}
+
+function stripGlobalOptions(argv: string[]): string[] {
+  const stripped: string[] = [];
+
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--udid") {
+      i += 1;
+      continue;
+    }
+
+    stripped.push(argv[i]);
+  }
+
+  return stripped;
 }
 
 function requestState(payload: any) {
@@ -336,7 +389,7 @@ async function cmdKIFType(args: string[]) {
 
 // --- Main ---
 
-const args = process.argv.slice(2);
+const args = stripGlobalOptions(process.argv.slice(2));
 const cmd = args[0];
 const sub = args[1];
 const rest = args.slice(2);
@@ -365,16 +418,18 @@ if (cmd === "server") {
   console.log(`swiftui-tap — CLI for SwiftUITap
 
 Usage:
-  swiftui-tap server [--port 9876] [--debug]
-  swiftui-tap view tree [id] [--json]
-  swiftui-tap view screenshot [id] [-o file] [--format png|jpg] [--scale N]
-  swiftui-tap state get <path>
-  swiftui-tap state set <path> <value>
-  swiftui-tap state call <method> [key=value ...]
-  swiftui-tap kif.tap <x> <y>
-  swiftui-tap kif.swipe <x1> <y1> <x2> <y2> [duration]
-  swiftui-tap kif.longpress <x> <y> [duration]
-  swiftui-tap kif.type <text>
+  swiftui-tap [--udid <udid>] server [--port 9876] [--debug]
+  swiftui-tap [--udid <udid>] view tree [id] [--json]
+  swiftui-tap [--udid <udid>] view screenshot [id] [-o file] [--format png|jpg] [--scale N]
+  swiftui-tap [--udid <udid>] state get <path>
+  swiftui-tap [--udid <udid>] state set <path> <value>
+  swiftui-tap [--udid <udid>] state call <method> [key=value ...]
+  swiftui-tap [--udid <udid>] kif.tap <x> <y>
+  swiftui-tap [--udid <udid>] kif.swipe <x1> <y1> <x2> <y2> [duration]
+  swiftui-tap [--udid <udid>] kif.longpress <x> <y> [duration]
+  swiftui-tap [--udid <udid>] kif.type <text>
 
-Env: SWIFTUI_TAP_URL (default: http://localhost:9876)`);
+Env:
+  SWIFTUI_TAP_URL   default: http://localhost:9876
+  SWIFTUI_TAP_UDID  optional target device`);
 }

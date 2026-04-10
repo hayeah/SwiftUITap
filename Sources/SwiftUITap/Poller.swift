@@ -3,14 +3,18 @@ import Foundation
 /// Long-polls the agent server for requests and dispatches them on MainActor.
 @MainActor
 final class Poller {
+    private static let deviceUDIDHeader = "x-swiftui-tap-udid"
+
     private let dispatcher: Dispatcher
     let serverURL: URL
+    let deviceUDID: String?
     private let session: URLSession
     private var isRunning = false
 
     init(state: any TapDispatchable, serverURL: URL) {
         self.dispatcher = Dispatcher(state: state)
         self.serverURL = serverURL
+        self.deviceUDID = Self.resolveDeviceUDID()
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 300
         config.timeoutIntervalForResource = 300
@@ -46,6 +50,9 @@ final class Poller {
         var urlRequest = URLRequest(url: pollURL)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let deviceUDID {
+            urlRequest.setValue(deviceUDID, forHTTPHeaderField: Self.deviceUDIDHeader)
+        }
 
         if let response = previousResponse {
             urlRequest.httpBody = try JSONSerialization.data(withJSONObject: response)
@@ -86,6 +93,27 @@ final class Poller {
                 try? await Task.sleep(for: .seconds(2))
             }
         }
+    }
+
+    private static func resolveDeviceUDID() -> String? {
+        let env = ProcessInfo.processInfo.environment
+
+        if let simulatorUDID = trimmed(env["SIMULATOR_UDID"]) {
+            return simulatorUDID
+        }
+
+        if let overrideUDID = trimmed(env["SWIFTUI_TAP_UDID"]) {
+            return overrideUDID
+        }
+
+        return nil
+    }
+
+    private static func trimmed(_ value: String?) -> String? {
+        guard let value else { return nil }
+
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 

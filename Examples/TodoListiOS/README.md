@@ -30,6 +30,8 @@ xcrun simctl launch booted com.hayeah.TodoListiOS
 
 You should see `[SwiftUITap] Polling http://localhost:9876` in the server output.
 
+On simulator, the app automatically identifies itself with `SIMULATOR_UDID` when polling the relay. For on-device builds, set `SWIFTUI_TAP_UDID` at launch if you want the device to have a stable routing key.
+
 ## Verify
 
 ```bash
@@ -45,6 +47,9 @@ swiftui-tap view tree
 # State
 swiftui-tap state get .
 swiftui-tap state call addTodo title="Buy milk"
+
+# Target one simulator/device explicitly
+swiftui-tap --udid <simulator-udid> state call addTodo '{"title":"Only on this simulator"}'
 ```
 
 ## App Structure
@@ -66,3 +71,4 @@ TodoListiOS/
 - The app is a pure SPM executable — no `.xcodeproj`. Xcode treats the `Package.swift` as a workspace when using `xcodebuild -scheme`.
 - `swift build` won't work for iOS targets — use `xcodebuild` with a simulator destination.
 - The `AGENTSDK_URL` env var overrides the default server URL (`http://localhost:9876`).
+- The relay routes commands by UDID. `swiftui-tap --udid <udid>` and `SWIFTUI_TAP_UDID` target a specific app instance.

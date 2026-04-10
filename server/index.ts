@@ -1,5 +1,7 @@
 #!/usr/bin/env bun
 
+import { DEVICE_UDID_HEADER, RelayServer } from "./RelayServer";
+
 // Minimal HTTP server that pairs agent requests with app long-polls.
 //
 // - POST /poll    — app long-polls here; receives queued requests, responds with results
@@ -17,37 +19,7 @@ function log(...msg: any[]) {
   if (debug) console.log("[agentsdk]", ...msg);
 }
 
-// Pending agent requests waiting for app responses.
-// Uses _reqID (internal) for tracking — never touches user-facing fields like "id".
-interface PendingRequest {
-  _reqID: string;
-  request: any;
-  resolve: (body: any) => void;
-}
-
-const pendingRequests: PendingRequest[] = [];
-let requestCounter = 0;
-
-// App poll — resolves when there's a request to process
-let appWaiting: ((request: any) => void) | null = null;
-
-function deliverToApp(request: any): Promise<any> {
-  return new Promise<any>((resolve) => {
-    const entry: PendingRequest = {
-      _reqID: request._reqID,
-      request,
-      resolve,
-    };
-    pendingRequests.push(entry);
-
-    // If app is already waiting, deliver immediately
-    if (appWaiting) {
-      const deliver = appWaiting;
-      appWaiting = null;
-      deliver(request);
-    }
-  });
-}
+const relayServer = new RelayServer();
 
 // Process screenshot: crop to view id frame, resize, convert format
 async function processScreenshot(
@@ -187,42 +159,18 @@ Bun.serve({
 
   async fetch(req) {
     const url = new URL(req.url);
+    const udid = req.headers.get(DEVICE_UDID_HEADER) ?? url.searchParams.get("udid");
 
     if (url.pathname === "/poll" && req.method === "POST") {
       const body = await req.json().catch(() => null);
-
-      // If body has a _reqID, it's a response to a previous request
+      relayServer.submitResponse(udid, body);
       if (body?._reqID) {
-        const idx = pendingRequests.findIndex(
-          (p) => p._reqID === body._reqID
-        );
-        if (idx >= 0) {
-          const pending = pendingRequests.splice(idx, 1)[0];
-          log("← app response for", body._reqID, JSON.stringify(body));
-          pending.resolve(body);
-        }
+        log("← app response for", body._reqID, "udid=", udid ?? "(default)", JSON.stringify(body));
       }
 
-      // Wait for the next agent request
-      if (pendingRequests.length > 0) {
-        // There's already a queued request — return it immediately
-        const next = pendingRequests.find(
-          (p) => !("delivered" in (p as any))
-        );
-        if (next) {
-          (next as any).delivered = true;
-          log("→ delivering queued request", next._reqID);
-          return Response.json(next.request);
-        }
-      }
-
-      // No queued requests — wait
-      return new Promise<Response>((resolve) => {
-        appWaiting = (request: any) => {
-          log("→ delivering request to app", request._reqID);
-          resolve(Response.json(request));
-        };
-      });
+      const nextRequest = await relayServer.waitForNextRequest(udid);
+      log("→ delivering request to app", nextRequest._reqID, "udid=", udid ?? "(default)");
+      return Response.json(nextRequest);
     }
 
     if (
@@ -230,21 +178,14 @@ Bun.serve({
       req.method === "POST"
     ) {
       const request = await req.json();
-      request._reqID = `req_${++requestCounter}`;
-      request._path = url.pathname;
-
-      log(
-        "← agent request",
-        request._reqID,
-        url.pathname,
-        JSON.stringify(request)
-      );
-
-      if (!appWaiting && pendingRequests.length === 0) {
-        log("  (no app connected, queueing)");
+      const resultPromise = relayServer.dispatchRequest(url.pathname, request, udid);
+      if (!resultPromise) {
+        return Response.json({ error: "no app connected" }, { status: 503 });
       }
 
-      const result = await deliverToApp(request);
+      log("← agent request", request._reqID, url.pathname, "udid=", udid ?? "(default)", JSON.stringify(request));
+
+      const result = await resultPromise;
 
       // Post-process screenshot: crop to view id if specified
       if (
@@ -274,11 +215,7 @@ Bun.serve({
     }
 
     if (url.pathname === "/health") {
-      return Response.json({
-        status: "ok",
-        appConnected: appWaiting !== null,
-        pendingRequests: pendingRequests.length,
-      });
+      return Response.json(relayServer.health());
     }
 
     return new Response("not found", { status: 404 });

@@ -147,6 +147,15 @@ Start the server:
 swiftui-tap server --port 9876
 ```
 
+Target a specific simulator or device with `--udid` (or `SWIFTUI_TAP_UDID`):
+
+```bash
+swiftui-tap --udid 6A8D... state get .
+swiftui-tap --udid 6A8D... state call addTodo '{"title":"On that device only"}'
+```
+
+If you omit `--udid`, the relay sends the request to the first connected device for backwards compatibility.
+
 ### State control
 
 ```bash
@@ -299,6 +308,13 @@ Set `SWIFTUI_TAP_URL` to point to a different server:
 
 ```bash
 export SWIFTUI_TAP_URL=http://192.168.1.5:9876
+swiftui-tap state get .
+```
+
+Set `SWIFTUI_TAP_UDID` to default the CLI to one device:
+
+```bash
+export SWIFTUI_TAP_UDID=6A8D...
 swiftui-tap state get .
 ```
 
@@ -549,6 +565,13 @@ struct MyApp: App {
 }
 ```
 
+On the app side, `Poller` automatically sends the device identity in the `x-swiftui-tap-udid` header on every `/poll` request:
+
+- Simulator: uses `SIMULATOR_UDID`
+- Device builds: falls back to `SWIFTUI_TAP_UDID` if you inject one at launch
+
+That lets multiple apps share one relay server while keeping their command queues isolated.
+
 ## Disabling for Production
 
 Wrap `@SwiftUITap` in `#if DEBUG` so release builds have zero agent overhead — no dispatch code, no protocol conformance:
@@ -577,7 +600,7 @@ swiftui-tap server --port 9876 --debug
 
 # Health check
 curl localhost:9876/health
-# → {"status": "ok", "appConnected": true, "pendingRequests": 0}
+# → {"status":"ok","appConnected":true,"pendingRequests":0,"devices":[...]}
 ```
 
 ## What the Macro Generates

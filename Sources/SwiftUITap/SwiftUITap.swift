@@ -20,7 +20,11 @@ public enum SwiftUITap {
         // Retain the poller via global storage
         _activePollers.append(poller)
         poller.start()
-        print("[SwiftUITap] Polling \(server)")
+        if let deviceUDID = poller.deviceUDID {
+            print("[SwiftUITap] Polling \(server) as \(deviceUDID)")
+        } else {
+            print("[SwiftUITap] Polling \(server)")
+        }
     }
 
     /// URLs of all currently-running pollers. Useful for surfacing in a
